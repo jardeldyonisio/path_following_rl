@@ -44,7 +44,10 @@ class MultiAgentPathFollowingEnv(gym.Env):
     def step(self, actions):
         self.update_positions(actions)
         distances, angles = self.calculate_path_metrics()
-        rewards = self.calculate_rewards(distances, angles)
+        
+        # Extraindo velocidades das ações para passar para a função de recompensa
+        speeds = actions[:, 1]  
+        rewards = self.calculate_rewards(distances, angles, speeds)
         
         self.active_agents = self.active_agents & (distances <= 5.0)
 
@@ -82,7 +85,7 @@ class MultiAgentPathFollowingEnv(gym.Env):
 
     def update_positions(self, actions):
         # print("actions: ", actions)
-        actions = actions.reshape((self.num_agents, 2)) # Modificação aqui
+        actions = actions.reshape((self.num_agents, 2))  # Certifica-se de que as ações têm a forma correta
         steerings, speeds = actions[:, 0], actions[:, 1]
         self.orientations += steerings * 0.1
         dx = speeds * np.cos(self.orientations)
@@ -101,8 +104,23 @@ class MultiAgentPathFollowingEnv(gym.Env):
         
         return distance_to_path, angle_to_path
 
-    def calculate_rewards(self, distances, angles):
-        return -distances - 0.1 * (angles ** 2)
+    def calculate_rewards(self, distances, angles, speeds):
+        """
+        Calcula a recompensa com base na distância do caminho, ângulo de orientação
+        e velocidade do robô.
+        """
+        reward = -distances - 0.1 * (angles ** 2)
+
+        if self.active_agents == False:
+            reward -= 100.0
+    
+        # Bônus por estar muito próximo do caminho
+        reward[distances < 0.1] += 1.0  
+
+        # Penalizar se a velocidade for muito baixa (evita que o robô fique parado)
+        reward[speeds < 0.05] -= 5.0  # Penalidade forte se o robô ficar parado
+        
+        return reward
 
     def generate_path(self):
         return np.array([[i, 0.0] for i in range(100)])

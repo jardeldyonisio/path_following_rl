@@ -43,6 +43,8 @@ for episode in range(episodes):
     rewards.append(episode_reward)
     avg_rewards.append(np.mean(reward[-10:]))
 
+agent.save_model("ddpg_model.pth")
+
 plt.plot(rewards)
 plt.plot(avg_rewards)
 plt.plot()
