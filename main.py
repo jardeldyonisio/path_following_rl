@@ -11,14 +11,14 @@ This code it's the main file to run the environment.
 '''
 
 # Creating the environment
-env = MultiAgentPathFollowingEnv(num_agents=20)
+env = MultiAgentPathFollowingEnv(num_agents=1)
 agent = DDPGAgent(state_dim=4, action_dim=2, max_action=1.0)  
 # agent = DDPGAgent(env)
 
 # Número de episódios para rodar
 rewards = []
 avg_rewards = []
-episodes = 10
+episodes = 1000
 batch_size = 128
 
 for episode in range(episodes):

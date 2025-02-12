@@ -82,7 +82,7 @@ class MultiAgentPathFollowingEnv(gym.Env):
 
     def update_positions(self, actions):
         # print("actions: ", actions)
-        # actions = actions.reshape((self.num_agents, 2)) # Modificação aqui
+        actions = actions.reshape((self.num_agents, 2)) # Modificação aqui
         steerings, speeds = actions[:, 0], actions[:, 1]
         self.orientations += steerings * 0.1
         dx = speeds * np.cos(self.orientations)

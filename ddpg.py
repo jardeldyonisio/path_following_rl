@@ -39,16 +39,25 @@ class DDPGAgent:
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr = actor_learning_rate)
         self.critic_optimizer = optim.Adam(self.critic.parameters(), lr = critic_learning_rate)
     
+    # def get_action(self, state):
+    #     '''
+    #     This function is responsible for getting the action from the actor network.
+    #     '''
+    #     state = torch.FloatTensor(state).unsqueeze(0)
+    #     print('state: ', state)
+    #     action = self.actor.forward(state)
+    #     # action = self.actor(state).cpu().detach().numpy().flatten()
+    #     action = action.detach().numpy()[0,0]
+    #     print("action: ", action)
+    #     return action
+
     def get_action(self, state):
-        '''
-        This function is responsible for getting the action from the actor network.
-        '''
         state = torch.FloatTensor(state).unsqueeze(0)
-        print('state: ', state)
-        action = self.actor.forward(state)
-        # action = self.actor(state).cpu().detach().numpy().flatten()
-        action = action.detach().numpy()[0,0]
-        print("action: ", action)
+        action = self.actor.forward(state).detach().numpy()
+        
+        if action.shape[0] == 1:  # Caso seja um vetor 1D
+            action = action.reshape(-1, 2)  # Converte para (num_agents, 2)
+
         return action
     
     def update(self, batch_size):
