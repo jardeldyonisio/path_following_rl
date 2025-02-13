@@ -68,7 +68,7 @@ class MultiAgentPathFollowingEnv(gym.Env):
             self.fig, self.ax = plt.subplots()
 
             # Create agent markers
-            self.path_plot, = self.ax.plot([], [], linestyle='--', label='Path')
+            self.path_plot, = self.ax.plot([], [], label='Path')
 
             # Create front indicators (small lines)
             self.agent_plots = [self.ax.plot([], [], 'o', label=f'Agent {i}')[0] for i in range(self.num_agents)]
