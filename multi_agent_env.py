@@ -64,21 +64,37 @@ class MultiAgentPathFollowingEnv(gym.Env):
 
     def render(self, mode='human'):
         if not hasattr(self, 'fig'):
+            # Create the plot
             self.fig, self.ax = plt.subplots()
+
+            # Create agent markers
             self.path_plot, = self.ax.plot([], [], linestyle='--', label='Path')
+
+            # Create front indicators (small lines)
             self.agent_plots = [self.ax.plot([], [], 'o', label=f'Agent {i}')[0] for i in range(self.num_agents)]
+            self.agent_fronts = [self.ax.plot([], [], '-', color='red')[0] for _ in range(self.num_agents)]
+            
+            # Set plot limits
             self.ax.set_xlim(-10, 110)
             self.ax.set_ylim(-10, 10)
             self.ax.legend()
             plt.ion()
             plt.show(block=False)
 
+        # Update path
         path_x, path_y = zip(*self.path)
         self.path_plot.set_data(path_x, path_y)
 
+        # Update agent positions and front indicators
         for i, agent_plot in enumerate(self.agent_plots):
             if self.active_agents[i]:
-                agent_plot.set_data(self.positions[i, 0], self.positions[i, 1])
+                x, y = self.positions[i]
+                agent_plot.set_data(x, y)  # Update agent position
+                
+                # Compute front indicator position (short line in the direction of orientation)
+                front_x = x + 0.5 * np.cos(self.orientations[i])
+                front_y = y + 0.5 * np.sin(self.orientations[i])
+                self.agent_fronts[i].set_data([x, front_x], [y, front_y])  # Draw front line
 
         self.fig.canvas.draw_idle()
         self.fig.canvas.flush_events()
