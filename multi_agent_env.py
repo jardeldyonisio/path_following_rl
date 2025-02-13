@@ -84,7 +84,6 @@ class MultiAgentPathFollowingEnv(gym.Env):
         self.fig.canvas.flush_events()
 
     def update_positions(self, actions):
-        # print("actions: ", actions)
         actions = actions.reshape((self.num_agents, 2))  # Certifica-se de que as ações têm a forma correta
         steerings, speeds = actions[:, 0], actions[:, 1]
         self.orientations += steerings * 0.1
@@ -106,20 +105,30 @@ class MultiAgentPathFollowingEnv(gym.Env):
 
     def calculate_rewards(self, distances, angles, speeds):
         """
-        Calcula a recompensa com base na distância do caminho, ângulo de orientação
-        e velocidade do robô.
+        Calcula a recompensa com base na distância do caminho, ângulo de orientação,
+        velocidade do robô e chegada ao final do caminho.
         """
-        reward = -distances - 0.1 * (angles ** 2)
+        reward = -distances - 0.01 * (angles ** 2)
 
-        if self.active_agents == False:
-            reward -= 100.0
-    
+        # The variable self.active_agents is a boolean array that keeps track 
+        # of which agents are still active, if they are not, it's beacause they
+        # are either too far from the path or they have reached the end of the path
+        reward[~self.active_agents] -= 100.0  
+
         # Bônus por estar muito próximo do caminho
         reward[distances < 0.1] += 1.0  
 
         # Penalizar se a velocidade for muito baixa (evita que o robô fique parado)
-        reward[speeds < 0.05] -= 5.0  # Penalidade forte se o robô ficar parado
+        reward[speeds < 0.05] -= 5.0  
+
+        # 🎯 Alta recompensa para agentes que chegaram ao fim do caminho
+        final_position = self.path[-1]  # Última posição do caminho
+        reached_goal = np.linalg.norm(self.positions - final_position, axis=1) < 0.2  # Verifica se o agente chegou perto do fim
         
+        reward[reached_goal] += 100.0  # Alta recompensa para incentivar alcançar o objetivo
+
+        # reward = np.maximum(reward, 0.0)
+
         return reward
 
     def generate_path(self):
