@@ -101,3 +101,23 @@ class DDPGAgent:
         
         for target_param, param in zip(self.critic_target.parameters(), self.critic.parameters()):
             target_param.data.copy_(param.data * self.tau + target_param.data * (1.0 - self.tau))
+
+    def save_model(self, filename="ddpg_model.pth"):
+        '''
+        Saves the model's weights to a file.
+        '''
+        torch.save({
+            'actor': self.actor.state_dict(),
+            'critic': self.critic.state_dict(),
+        }, filename)
+        print(f"Model saved to {filename}")
+
+    def load_model(self, filename="ddpg_model.pth"):
+        '''
+        Loads the model's weights from a file.
+        '''
+        checkpoint = torch.load(filename, map_location=torch.device('cpu'))
+        self.actor.load_state_dict(checkpoint['actor'])
+        self.critic.load_state_dict(checkpoint['critic'])
+        self.actor.eval()
+        print(f"Model loaded from {filename}")
