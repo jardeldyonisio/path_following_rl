@@ -16,7 +16,7 @@ agent.critic.load_state_dict(checkpoint['critic'])
 agent.actor.eval()  # Coloca a rede em modo de avaliação
 
 # Rodar a simulação
-num_episodes = 5  # Número de episódios de teste
+num_episodes = 100  # Número de episódios de teste
 
 for episode in range(num_episodes):
     state, _ = env.reset()
