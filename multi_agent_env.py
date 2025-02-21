@@ -31,6 +31,7 @@ class MultiAgentPathFollowingEnv(gym.Env):
         )
         
         self.reset()
+        self.previous_steering = np.zeros(self.num_agents)
 
     def reset(self):
         '''
@@ -44,8 +45,16 @@ class MultiAgentPathFollowingEnv(gym.Env):
         self.r_forward = 0.0
         self.r_distance = 0.0
         self.r_angle = 0.0
-        self.failed = 0.0
-        self.success = 0.0
+        self.r_steering = 0.0
+        self.failed = False
+        self.success = False
+        self.r_window = np.zeros(self.num_agents)
+
+        self.goal = None
+        self.goal_counter = 0
+
+        self.window_size = 5  
+        self.active_goal_indices = list(range(self.window_size))  # Start with first 5 path points
         self.active_agents = np.ones(self.num_agents, dtype=bool)
         return self.get_state(), {}
 
@@ -53,7 +62,7 @@ class MultiAgentPathFollowingEnv(gym.Env):
         '''
         Get the current state of the environment.
         '''
-        distances, angles = self.calculate_path_metrics()
+        distances, angles, _ = self.calculate_path_metrics()
         return np.column_stack((self.positions, distances, angles))
 
     def step(self, actions):
@@ -61,19 +70,19 @@ class MultiAgentPathFollowingEnv(gym.Env):
         Step the environment forward using the given actions.
         '''
         self.update_positions(actions)
-        distances, angles = self.calculate_path_metrics()
+        distances, angles, closest = self.calculate_path_metrics()
         
         speeds = actions[:, 1]  
-        rewards = self.calculate_rewards(distances, angles, speeds)
+        rewards = self.calculate_rewards(distances, angles, speeds, actions[:, 0], closest)
         
-        self.active_agents = self.active_agents & (distances <= 5.0)
+        self.active_agents = self.active_agents & (distances <= 10.0)
         
         self.failed = (self.active_agents == 0)
-        self.success = (np.linalg.norm(self.positions - self.path[-1], axis=1) < 0.2)
+        # self.success = (np.linalg.norm(self.positions - self.path[-1], axis=1) < 0.2)
 
-        if self.success:
-            rewards += 100.0
-        elif self.failed:
+        # if self.success:
+        #     rewards += 10.0
+        if self.failed:
             rewards -= 100.0
 
         next_state = self.get_state()
@@ -84,7 +93,7 @@ class MultiAgentPathFollowingEnv(gym.Env):
             self.replay_buffer.pop(0)
 
         self.time += 1
-        done = self.time > 100 or self.success or self.failed
+        done = self.time > 150 or self.success or self.failed
         return next_state, rewards, done, {}
 
     def render(self, mode='human'):
@@ -92,13 +101,18 @@ class MultiAgentPathFollowingEnv(gym.Env):
             # Create the plot
             self.fig, self.ax = plt.subplots()
 
-            # Create agent markers
-            self.path_plot, = self.ax.plot([], [], label='Path')
-
-            # Create front indicators (small lines)
+            # Create path and agent markers
+            self.path_plot, = self.ax.plot([], [], linestyle='--', label='Path')
             self.agent_plots = [self.ax.plot([], [], 'o', label=f'Agent {i}')[0] for i in range(self.num_agents)]
             self.agent_fronts = [self.ax.plot([], [], '-', color='red')[0] for _ in range(self.num_agents)]
-            
+
+            # ✅ Sliding window markers
+            self.goal_markers, = self.ax.plot([], [], 'bo', markersize=8, label='Goal Window')  # 🔵 Window points
+            self.next_goal_marker, = self.ax.plot([], [], 'rx', markersize=10, label='Next Goal')  # ❌ First goal
+
+            # ✅ Closest path points
+            self.closest_markers, = self.ax.plot([], [], 'g*', markersize=8, label='Closest Point')  # ⭐ Green closest point
+
             # Set plot limits
             self.ax.set_xlim(-10, 110)
             self.ax.set_ylim(-10, 10)
@@ -111,15 +125,31 @@ class MultiAgentPathFollowingEnv(gym.Env):
         self.path_plot.set_data(path_x, path_y)
 
         # Update agent positions and front indicators
+        closest_xs, closest_ys = [], []
         for i, agent_plot in enumerate(self.agent_plots):
             if self.active_agents[i]:
                 x, y = self.positions[i]
                 agent_plot.set_data(x, y)  # Update agent position
-                
-                # Compute front indicator position (short line in the direction of orientation)
+
+                # Compute front indicator position
                 front_x = x + 0.5 * np.cos(self.orientations[i])
                 front_y = y + 0.5 * np.sin(self.orientations[i])
-                self.agent_fronts[i].set_data([x, front_x], [y, front_y])  # Draw front line
+                self.agent_fronts[i].set_data([x, front_x], [y, front_y])  # Red line for orientation
+
+                # ✅ Show closest path point
+                closest_idx = self.closest_indices[i]  # Get index of the closest point
+                closest_x, closest_y = self.path[closest_idx]
+                closest_xs.append(closest_x)
+                closest_ys.append(closest_y)
+
+        # Update closest points on the graph
+        self.closest_markers.set_data(closest_xs, closest_ys)  # ⭐ Show closest points
+
+        # ✅ Show Sliding Window Points
+        if self.active_goal_indices:
+            goal_xs, goal_ys = zip(*[self.path[i] for i in self.active_goal_indices])
+            self.goal_markers.set_data(goal_xs, goal_ys)  # 🔵 Show window points
+            self.next_goal_marker.set_data(goal_xs[0], goal_ys[0])  # ❌ First goal point
 
         self.fig.canvas.draw_idle()
         self.fig.canvas.flush_events()
@@ -130,6 +160,8 @@ class MultiAgentPathFollowingEnv(gym.Env):
         '''
         actions = actions.reshape((self.num_agents, 2))
         steerings, speeds = actions[:, 0], actions[:, 1]
+        
+        # In the original code the steering limitation is defined here
         self.orientations += steerings * 0.1
         dx = speeds * np.cos(self.orientations)
         dy = speeds * np.sin(self.orientations)
@@ -147,13 +179,13 @@ class MultiAgentPathFollowingEnv(gym.Env):
         distances = np.linalg.norm(self.path[:, None, :] - self.positions[None, :, :], axis=2)
 
         # Find the index of the closest point in the path for each agent
-        closest_indices = np.argmin(distances, axis=0)
+        self.closest_indices = np.argmin(distances, axis=0)
 
         # Find the coordinates of the closest points
-        closest_points = self.path[closest_indices]
+        closest_points = self.path[self.closest_indices]
         
         # Calculate the distance for the closest point
-        distance_to_path = distances[closest_indices, np.arange(self.num_agents)]
+        distance_to_path = distances[self.closest_indices, np.arange(self.num_agents)]
 
         # Calculate the angle between the closest point and the agent's orientation
         path_directions = np.arctan2(closest_points[:, 1] - self.positions[:, 1],
@@ -165,63 +197,152 @@ class MultiAgentPathFollowingEnv(gym.Env):
         distance_to_closest_point = distance_to_path
         angle_to_closest_point = angle_to_path 
         
-        return distance_to_closest_point, angle_to_closest_point
+        return distance_to_closest_point, angle_to_closest_point, self.closest_indices
 
-    def calculate_rewards(self, distances, angles, speeds):
+    def calculate_angle(self):
+        '''
+        Calculate the angle between the agent's orientation and the path.
+        '''
+        path_directions = np.arctan2(self.goal[1] - self.positions[:, 1],
+                                     self.goal[0] - self.positions[:, 0])
+        
+        angle_to_path = path_directions - self.orientations
+        return angle_to_path
+    
+    def calculate_goal(self):
+        '''
+        Calculate the goal for each agent based on the distance and angle to the path.
+        '''
+        if self.goal is None:
+            self.goal = self.path[0]
+        else:
+            self.goal = self.path[self.goal_counter]
+            self.goal_counter += 1
+
+    def calculate_rewards(self, distances, angles, speeds, steerings, closest_indices):
         '''
         Calculate the reward for each agent based on the distance and angle to the path.
         '''
+        
+        '''
+        I tried to implement a succcess and failed reward, but I don't if it's working well.
+        The failed is basically when the agent is too far from the path or the episode time
+        is over. The success is when the agent is threshold under of the last path point.
+        '''
 
-        # Reward based on the distance to the path.
-        # k_distance is the coefficient of the distance reward.
-        k_distance = 0.5
-        self.r_distance = k_distance * (-distances)
+        '''
+        The distance reward is a commum choice for path following tasks. There are some 
+        variations of this reward, but the most common is the reward based on the distance
+        to the path. How many far from the path the agent is, less penality.
+        '''
+        k_d = 0.5
+        self.r_distance += k_d * (-distances)
+        # print("r_distance: ", self.r_distance)
 
         # Reward based on the angle to the path.
         # k_angle is the coefficient of the angle reward.
-        k_angle = 0.3
-        self.r_angle = k_angle * (-angles)
+        k_a = 0.3
+        self.r_angle = k_a * (-angles)
+        # print("r_angle: ", self.r_angle)
+
+        '''
+        Based on Reinforcement Learning-Based High-Speed Path Following Control for Autonomous
+        Vehicles
+
+        This reward function has the ide
+        '''
+        k_s = 0.01
+        self.r_speed = k_s * speeds
+
+        # steering_change = np.abs(self.previous_steering - steerings)  # How much steering changed
+
+        # if steering_change > 0.2:
+        #     self.r_steering -= 20.0
+
+        '''
+        The reward below, steering_change < 0.02, is not working well. The agent is
+        spinning in circles. Maybe it's a problem try to define a threshold to the 
+        steering_change.
+        '''
+        # if steering_change < 0.02:
+        #     self.r_steering += 1.0
 
         # # Bônus por estar muito próximo do caminho
         # reward[distances < 0.1] += 1.0  
-
-        if speeds < 0.05:
-            self.r_speed -= 5.0
 
         '''
         Reward based on the progress made along the path
         By: Path Following Optimization for an Underactuated 
         USV Using Smoothly-Convergent Deep Reinforcement Learning
+
+        Notes: The issue of this reward is that the agent is rewarded
+        for moving forward even if it is not following the path. A solution
+        can be add a thereshold to the distance to the path to receive the 
+        reward.
         '''
         
         # Maximum coefficient of the navigation reward
-        k_N = 1.0
+        # k_N = 0.8
         
-        # Full path length
-        total_path_length = np.linalg.norm(self.path[0] - self.path[-1])  
+        # # Full path length
+        # total_path_length = np.linalg.norm(self.path[0] - self.path[-1])  
         
-        # Distance traveled from start
-        progress_param = np.linalg.norm(self.positions - self.path[0], axis=1)  
+        # # Distance traveled from start
+        # progress_param = np.linalg.norm(self.positions - self.path[0], axis=1)  
 
-        # Normalize progress
-        navigational_reward = k_N * (progress_param / total_path_length)  
+        # # Normalize progress
+        # navigational_reward = k_N * (progress_param / total_path_length)  
         
-        # Add to total reward
-        self.r_forward += navigational_reward
+        # # Add to total reward
+        # self.r_forward = navigational_reward
 
-        # print("-----")
-        # print("r_distance: ", self.r_distance)
-        # print("r_forward: ", self.r_forward)
-        # print("r_speed: ", self.r_speed)
-        # print("r_angle: ", self.r_angle)
-        reward = self.r_distance + self.r_forward + self.r_speed + self.r_angle
+        # k_N = 0.8  # Maximum navigation reward
+        # total_path_length = len(self.path)  # Full path length (total points in path)
 
-        # # Alta recompensa para agentes que chegaram ao fim do caminho
+        # # Where we still having the issue of the agent moving forward without following the path
+        # # but it's a new try to solve this problem. Another issue is the agent trying to reach always
+        # # the same closest point in the path.
+        # progress_param = closest_indices / total_path_length  
+        # navigational_reward = k_N * progress_param
+
+        # self.r_forward += navigational_reward
+
+        window_rewards = np.linspace(1.0, 0.2, self.window_size)  # Higher reward for earlier points
+
+        # ✅ **Sliding Window Goal Completion Using `distances`**
+        for i, agent_idx in enumerate(closest_indices):
+            # ✅ Get the closest point’s distance from `distances`
+            goal_distance = distances  # Distance to the nearest goal point
+
+            # ✅ Check if agent is within 0.2m of the first goal in the window
+            if goal_distance < 0.2:
+                self.r_window[i] += 1.0  # Full reward for reaching the goal
+                self.active_goal_indices.pop(0)  # ✅ Remove first goal
+                new_index = self.active_goal_indices[-1] + 1  
+                if new_index < len(self.path):  
+                    self.active_goal_indices.append(new_index)  # ✅ Move window forward
+
+        # print("window_rewards: ", window_rewards)
+
+        reward = self.r_distance + self.r_forward + self.r_speed + self.r_angle + self.r_steering + self.r_window
+
+        '''
+        Some developers use the code below to avoid negative rewards.
+        '''
+        # if reward[0] < 0.0:
+        #     reward[0] = 0.0
+
+        '''
+        My actual best result was using a very big reward for the success (be close to the last point
+        of the path)
+        '''
         # final_position = self.path[-1]  # Última posição do caminho
         # reached_goal = np.linalg.norm(self.positions - final_position, axis=1) < 0.2  # Verifica se o agente chegou perto do fim
         # reward[reached_goal] += 100.0  # Alta recompensa para incentivar alcançar o objetivo
 
         # reward = np.maximum(reward, 0.0)
+
+        self.previous_steering = steerings
 
         return reward
 

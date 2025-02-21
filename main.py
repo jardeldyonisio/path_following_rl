@@ -18,7 +18,7 @@ agent = DDPGAgent(state_dim=4, action_dim=2, max_action=1.0)
 # Número de episódios para rodar
 rewards = []
 avg_rewards = []
-episodes = 1000
+episodes = 10000
 batch_size = 128
 
 for episode in range(episodes):
