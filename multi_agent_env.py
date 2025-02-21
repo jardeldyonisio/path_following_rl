@@ -198,6 +198,16 @@ class MultiAgentPathFollowingEnv(gym.Env):
         angle_to_closest_point = angle_to_path 
         
         return distance_to_closest_point, angle_to_closest_point, self.closest_indices
+    
+    def calculate_goal(self):
+        '''
+        Calculate the goal for each agent based on the distance and angle to the path.
+        '''
+        if self.goal is None:
+            self.goal = self.path[0]
+        else:
+            self.goal = self.path[self.goal_counter]
+            self.goal_counter += 1
 
     def calculate_angle(self):
         '''
