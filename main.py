@@ -1,25 +1,29 @@
 import sys
+import gym
 import numpy as np
 import matplotlib.pyplot as plt
 
 from multi_agent_env import MultiAgentPathFollowingEnv
 from ddpg import DDPGAgent
-from utils import Memory
+from utils import *
 
 '''
 This code it's the main file to run the environment.
 '''
 
 # Creating the environment
+# env = NormalizedEnv(gym.make("CarRacing-v2"))
 env = MultiAgentPathFollowingEnv(num_agents=1)
-agent = DDPGAgent(state_dim=4, action_dim=2, max_action=1.0)  
+
+agent = DDPGAgent(state_dim=4, action_dim=2, max_action=1.0)
+noise = OUNoise(env.action_space)
+batch_size = 128
 # agent = DDPGAgent(env)
 
 # Número de episódios para rodar
 rewards = []
 avg_rewards = []
 episodes = 10000
-batch_size = 128
 
 for episode in range(episodes):
     state, _ = env.reset()
@@ -27,6 +31,7 @@ for episode in range(episodes):
 
     for step in range(500):
         action = agent.get_action(state)
+        action = noise.get_action(action, step)
         new_state, reward, done, _ = env.step(action)
         agent.memory.push(state, action, reward, new_state, done)
 
