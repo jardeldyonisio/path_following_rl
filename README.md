@@ -3,3 +3,7 @@
 pip
 gymnasium
 pip torch
+
+## TODO:
+
+- Create a conda env;
