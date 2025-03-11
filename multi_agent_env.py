@@ -52,9 +52,9 @@ class MultiAgentPathFollowingEnv(gym.Env):
         self.success = False
         self.r_window = np.zeros(self.num_agents)
 
-        self.goals = np.zeros((self.num_agents, 2))
-        self.goal_counter = 0
-        self.calculate_goal()
+        self.current_goal_position = np.zeros((self.num_agents, 2))
+        self.current_goal_index = 0
+        self.update_goal()
 
         self.window_size = 5  
         self.active_goal_indices = list(range(self.window_size))  # Start with first 5 path points
@@ -73,7 +73,7 @@ class MultiAgentPathFollowingEnv(gym.Env):
         Step the environment forward using the given actions.
         '''
         self.update_positions(actions)
-        self.calculate_goal()
+        self.update_goal()
         distances, angles, closest = self.calculate_path_metrics()
         
         speeds = actions[:, 1]  
@@ -84,7 +84,7 @@ class MultiAgentPathFollowingEnv(gym.Env):
         # Will be pena
         self.failed = distances > 5.0 or self.time > 150
         # self.success = (np.linalg.norm(self.positions - self.path[-1], axis=1) < 0.2)
-        self.success = self.goal_counter == len(self.path) * 0.7
+        self.success = self.current_goal_index == len(self.path) * 0.7
 
         # if self.success:
         #     rewards += 100.0
@@ -136,6 +136,10 @@ class MultiAgentPathFollowingEnv(gym.Env):
             if self.active_agents[i]:
                 x, y = self.positions[i]
                 # Update agent position
+
+                # Garante que x e y sejam arrays NumPy com pelo menos um elemento
+                x = np.array([x]) if np.isscalar(x) else np.array(x)
+                y = np.array([y]) if np.isscalar(y) else np.array(y)
                 agent_plot.set_data(x, y)  
 
                 # Compute front indicator position
@@ -144,7 +148,7 @@ class MultiAgentPathFollowingEnv(gym.Env):
                 self.agent_fronts[i].set_data([x, front_x], [y, front_y])  # Red line for orientation
 
                 # Show current goal
-                goal_x, goal_y = self.goals
+                goal_x, goal_y = self.current_goal_position
                 goal_xs.append(goal_x)
                 goal_ys.append(goal_y)
 
@@ -154,7 +158,7 @@ class MultiAgentPathFollowingEnv(gym.Env):
         # Update title dynamically with speed, steering, and goal distance
         speed = self.last_speed if hasattr(self, 'last_speed') else 0.0
         steering = self.last_steering if hasattr(self, 'last_steering') else 0.0
-        self.title_text.set_text(f"Speed: {speed:.2f} m/s | Steering: {steering:.2f} rad | Goal Dist: {self.goals_distances[0][0]:.2f}m")
+        self.title_text.set_text(f"Speed: {speed:.2f} m/s | Steering: {steering:.2f} rad | Goal Dist: {self.current_goal_position_distances[0][0]:.2f}m")
 
         self.fig.canvas.draw_idle()
         self.fig.canvas.flush_events()
@@ -182,16 +186,16 @@ class MultiAgentPathFollowingEnv(gym.Env):
         '''
         # Calculate the euclidean distance between each agent and EVERY point in the path
         # distances = np.linalg.norm(self.path[:, None, :] - self.positions[None, :, :], axis=2)
-        self.goals_distances = np.linalg.norm(self.goals - self.positions[None, :, :], axis=2)
+        self.current_goal_position_distances = np.linalg.norm(self.current_goal_position - self.positions[None, :, :], axis=2)
 
         # Find the index of the closest point in the path for each agent
-        self.goals_indices = np.argmin(self.goals_distances, axis=0)
+        self.current_goal_position_indices = np.argmin(self.current_goal_position_distances, axis=0)
 
         # Find the coordinates of the closest points
-        closest_points = self.path[self.goals_indices]
+        closest_points = self.path[self.current_goal_position_indices]
         
         # Calculate the distance for the closest point
-        distance_to_path = self.goals_distances[self.goals_indices, np.arange(self.num_agents)]
+        distance_to_path = self.current_goal_position_distances[self.current_goal_position_indices, np.arange(self.num_agents)]
 
         # Calculate the angle between the closest point and the agent's orientation
         path_directions = np.arctan2(closest_points[:, 1] - self.positions[:, 1],
@@ -203,26 +207,28 @@ class MultiAgentPathFollowingEnv(gym.Env):
         distance_to_closest_point = distance_to_path
         angle_to_closest_point = angle_to_path 
         
-        return distance_to_closest_point, angle_to_closest_point, self.goals_indices
+        return distance_to_closest_point, angle_to_closest_point, self.current_goal_position_indices
     
-    def calculate_goal(self):
+    
+    def update_goal(self, goal_step = 1):
         '''
         Calculate the goal for each agent based on the distance and angle to the path.
         '''
-        if self.goal_counter == 0:
-            self.goals = self.path[0]
-            self.goal_counter += 1
-        elif self.goals_distances < 0.2:
-            self.goals = self.path[self.goal_counter]
-            self.goal_counter += 1
+        if self.current_goal_index == 0:
+            self.current_goal_position = self.path[0]
+            previus_goal_index = self.current_goal_index
+            self.current_goal_index += goal_step
+        elif self.current_goal_position_distances < 0.2:
+            self.current_goal_index += goal_step
+            self.current_goal_position = self.path[self.current_goal_index]
             self.r_forward += 10.0
 
     # def calculate_angle(self):
     #     '''
     #     Calculate the angle between the agent's orientation and the path.
     #     '''
-    #     path_directions = np.arctan2(self.goals[1] - self.positions[:, 1],
-    #                                  self.goals[0] - self.positions[:, 0])
+    #     path_directions = np.arctan2(self.current_goal_position[1] - self.positions[:, 1],
+    #                                  self.current_goal_position[0] - self.positions[:, 0])
         
     #     angle_to_path = path_directions - self.orientations
     #     return angle_to_path
@@ -248,7 +254,7 @@ class MultiAgentPathFollowingEnv(gym.Env):
         # self.r_distance = 2 * np.exp(-k_d * abs(distances)) - 1
         # self.r_distance = -k_d * abs(distances)
         self.r_distance = -abs(distances)
-        print("r_distance: ", self.r_distance)
+        # print("r_distance: ", self.r_distance)
         # self.r_distance += -distances
 
         # Reward based on the angle to the path.
@@ -307,7 +313,7 @@ class MultiAgentPathFollowingEnv(gym.Env):
         # total_path_length = len(self.path)
 
         # # # Normalize progress
-        # navigational_reward = k_N * (self.goal_counter / total_path_length)  
+        # navigational_reward = k_N * (self.current_goal_index / total_path_length)  
         
         # # # Add to total reward
         # self.r_forward = navigational_reward
