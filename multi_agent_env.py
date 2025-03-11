@@ -16,6 +16,7 @@ class MultiAgentPathFollowingEnv(gym.Env):
         self.num_agents = num_agents
         self.buffer_size = buffer_size
         self.replay_buffer = []
+        self.wheelbase = 1.0
         
         self.action_space = gym.spaces.Box(
             low=np.array([[-0.5, 0.1]] * num_agents),
@@ -37,27 +38,16 @@ class MultiAgentPathFollowingEnv(gym.Env):
         '''
         Reset the environment to the initial state.
         '''
+        self.path = self.generate_path()
         self.positions = np.zeros((self.num_agents, 2))
         self.orientations = np.zeros(self.num_agents)
 
-        # If will be created a new path for each episode, this line should be moved
-        self.path = self.generate_path()
         self.time = 0
-        self.r_speed = 0.0
-        self.r_forward = 0.0
-        self.r_distance = 0.0
-        self.r_angle = 0.0
-        self.r_steering = 0.0
         self.failed = False
         self.success = False
-        self.r_window = np.zeros(self.num_agents)
 
-        self.goals = np.zeros((self.num_agents, 2))
         self.current_goal_index = 0
-        self.calculate_goal()
 
-        self.window_size = 5  
-        self.active_goal_indices = list(range(self.window_size))  # Start with first 5 path points
         self.active_agents = np.ones(self.num_agents, dtype=bool)
         return self.get_state(), {}
 
@@ -65,32 +55,23 @@ class MultiAgentPathFollowingEnv(gym.Env):
         '''
         Get the current state of the environment.
         '''
-        distances, angles, _ = self.calculate_path_metrics()
-        return np.column_stack((self.positions, distances, angles))
+        _, _, _, _, _, _, _, goal_distance, angle_goal = self.update_goal_metrics()
+        print("Goal distance: ", goal_distance)
+        print("Angle goal: ", angle_goal)
+        print("Positions: ", self.positions)
+        return np.column_stack((self.positions, goal_distance, angle_goal))
 
     def step(self, actions):
         '''
         Step the environment forward using the given actions.
         '''
         self.update_positions(actions)
-        self.calculate_goal()
-        distances, angles, closest = self.calculate_path_metrics()
+        _, _, _, _, _, _, _, current_goal_distance, _ = self.update_goal_metrics()
         
-        speeds = actions[:, 1]  
-        rewards = self.calculate_rewards(distances, angles, speeds, actions[:, 0], closest)
+        rewards = self.calculate_rewards()
         
-        # self.active_agents = self.active_agents & (distances <= 10.0)
-        
-        # Will be pena
-        self.failed = distances > 5.0 or self.time > 150
-        # self.success = (np.linalg.norm(self.positions - self.path[-1], axis=1) < 0.2)
-        self.success = self.current_goal_index == len(self.path) * 0.7
-
-        # if self.success:
-        #     rewards += 100.0
-        # if self.failed:
-        #     print("Penalized")
-        #     rewards += -10.0
+        self.failed = current_goal_distance > 5.0 or self.time > 150
+        self.success = self.current_goal_index == len(self.path) - 1
 
         next_state = self.get_state()
         for i in range(self.num_agents):
@@ -163,96 +144,131 @@ class MultiAgentPathFollowingEnv(gym.Env):
         self.fig.canvas.draw_idle()
         self.fig.canvas.flush_events()
 
+    def calculate_wheels_velocities(self, actions):
+        '''
+        Calculate the velocity of the agents based on the given actions.
+        From the DDPG model this function receive the speeds and steering 
+        angles and convert them to left and right wheel speeds.
+        '''
+        steerings, speeds = actions[:, 0], actions[:, 1]
+
+        left_wheel_speed =  speeds - steerings * self.wheelbase / 2
+        right_wheel_speed = speeds + steerings * self.wheelbase / 2
+
+        linear_speed = (left_wheel_speed + right_wheel_speed) / 2.0
+        angular_speed = (right_wheel_speed - left_wheel_speed) / self.wheelbase
+
+        return linear_speed, angular_speed
+
+    def calculate_heading_angle(self, angular_speed, angle_step = 0.1):
+        '''
+        Update the orientation of the agents based on the given angular speed.
+        '''
+        self.orientations += angular_speed * angle_step
+        return self.orientations 
+
     def update_positions(self, actions):
         '''
-        Update the positions of the agents based on the given actions.
+        Update the positions of the agents based on the given actions for the simulation.
         '''
         actions = actions.reshape((self.num_agents, 2))
-        steerings, speeds = actions[:, 0], actions[:, 1]
+        linear_speed, angular_speed = self.calculate_wheels_velocities(actions)
+        heading_angle = self.calculate_heading_angle(angular_speed)
         
-        # In the original code the steering limitation is defined here
-        self.orientations += steerings * 0.1
-        dx = speeds * np.cos(self.orientations)
-        dy = speeds * np.sin(self.orientations)
+        # The small change in the robot's x-position after a timestep.
+        dx = linear_speed * np.cos(heading_angle)
+
+        # The small change in the robot's y-position after a timestep.
+        dy = linear_speed * np.sin(heading_angle)
+
         self.positions += np.column_stack((dx, dy))
 
     def calculate_path_metrics(self):
         '''
         This function calculates the distance and angle between the agent and the path.
-        
-        The first version only considered the distance and angle to the closest point.
-        Now, we also compute the **path tangent angle** to help the agent align better.
         '''
-    
-        current_goal, current_goal_index, previus_goal, previus_goal_index = self.calculate_goal()
-
-        # Compute Euclidean distance between each agent and EVERY goal point
-        self.current_goal_distance = np.linalg.norm(current_goal - self.positions[None, :, :], axis=2)
-
-        goal_direction = np.arctan2(
-            self.positions[None, :, 1] - previus_goal[:, 1],
-            self.positions[None, :, 0] - previus_goal[:, 0]
-        )
-
-        # Find the index of the closest goal in the path for each agent
-        self.goals_indices = np.argmin(self.current_goal_distance, axis=0)
-
-        # Find the coordinates of the closest goal points
-        goals_points = self.path[self.goals_indices]
+        distances_to_all_points = np.linalg.norm(self.path[:, None, :] - self.positions[None, :, :], axis=2)
+        closest_point_index = np.argmin(distances_to_all_points, axis=0)
+        closest_point_position = self.path[closest_point_index]
         
-        # Calculate the distance for the closest goal
-        distance_to_goal = self.current_goal_distance[self.goals_indices, np.arange(self.num_agents)]
+        if closest_point_index == 0:
+            previous_point_position = closest_point_position
+            current_point_position = self.path[closest_point_index + 1]
+        else:
+            previous_point_position = self.path[closest_point_index - 1]
+            current_point_position = closest_point_position
 
-        # Compute path direction at each goal point
-        previous_indices = np.maximum(self.goals_indices - 1, 0)  # Ensure valid indices
-        previous_points = self.path[previous_indices]
-
-        # Calculate **path tangent angle** (χ_path)
         path_direction = np.arctan2(
-            goals_points[:, 1] - previous_points[:, 1], 
-            goals_points[:, 0] - previous_points[:, 0]
-        )
+            previous_point_position[:, 1] - current_point_position[:, 1], 
+            previous_point_position[:, 0] - current_point_position[:, 0]
+            )
 
-        # Calculate the angle difference between the agent's orientation and path direction
-        angle_to_path = path_direction - self.orientations
+        return path_direction, previous_point_position
 
-        return distance_to_goal, angle_to_path, path_direction, self.goals_indices
+    def calculate_error(self):
+        '''
+        Calculate the progress error and lateral error.
+        '''
+        path_direction = self.calculate_path_metrics()
+        _, _, _, _, previus_goal_direction, previus_goal_distance = self.update_goal_metrics()
 
-    
-    def calculate_goal(self):
+        error_x = np.cos(path_direction - previus_goal_direction) * previus_goal_distance
+        error_y = np.sin(path_direction - previus_goal_direction) * previus_goal_distance
+
+        return error_x, error_y
+
+    def calculate_distance_between_points(self, p1, p2):
+        '''
+        Calculate the distance between two points.
+        '''
+        return np.absolute(np.linalg.norm(p1 - p2, axis=2))
+
+    def update_goal_metrics(self, goal_step = 1):
         '''
         Calculate the goal for each agent based on the distance and angle to the path.
         '''
-        # goal_step = 0
-        # path_goals = self.path
+
+        # error_x, error_y = self.calculate_error()
 
         if self.current_goal_index == 0:
-            # current_goal = self.path[0]
-            self.goals = self.path[0]
-            previus_goal = np.zeros((self.num_agents, 2))
-            self.current_goal_index += 1
-        elif self.current_goal_distance < 0.2:
-            self.goals = self.path[self.current_goal_index]
-            self.current_goal_index += 1
-            # current_goal = path_goals[goal_step + self.current_goal_index]
-            # self.r_forward += 1.0
-        # return current_goal, current_goal_index, previus_goal, previous_goal_index
+            current_goal_position = self.path[0]
+            current_goal_index = 0
 
-    # def calculate_angle(self):
-    #     '''
-    #     Calculate the angle between the agent's orientation and the path.
-    #     '''
-    #     path_directions = np.arctan2(self.goals[1] - self.positions[:, 1],
-    #                                  self.goals[0] - self.positions[:, 0])
+            previus_goal_position = current_goal_position
+            previus_goal_index = current_goal_index
+            
+            self.current_goal_index += goal_step
+        elif np.linalg.norm(previus_goal_position, current_goal_position) - error_x < 0.2:
+            self.current_goal_index += goal_step
+            current_goal_position = self.path[self.current_goal_index]
+            current_goal_index = self.current_goal_index
+
+            previus_goal_position = self.path[self.current_goal_index - goal_step]
+            previus_goal_index = self.current_goal_index - goal_step
+
+        previus_goal_direction = np.arctan2(
+            self.positions[:, 1] - previus_goal_position[1],
+            self.positions[:, 0] - previus_goal_position[0]
+        )
+
+        current_goal_direction = np.arctan2(
+            self.positions[None, :, 1] - current_goal_position[1],
+            self.positions[None, :, 0] - current_goal_position[0]
+        )
         
-    #     angle_to_path = path_directions - self.orientations
-    #     return angle_to_path
+        angle_to_current_goal = current_goal_direction - self.orientations
 
-    def calculate_rewards(self, distances, angles, speeds, steerings, goals_indices):
+        distance_between_goals = np.linalg.norm(previus_goal_position - current_goal_position, axis=0)
+        previus_goal_distance = np.linalg.norm(self.positions - previus_goal_position, axis=0)
+        current_goal_distance = np.linalg.norm(self.positions - current_goal_position, axis=0)
+
+        return current_goal_position, current_goal_index, previus_goal_position, previus_goal_index, previus_goal_direction, previus_goal_distance, distance_between_goals, current_goal_distance, angle_to_current_goal
+
+    def calculate_rewards(self, distances, angles):
         '''
         Calculate the reward for each agent based on the distance and angle to the path.
         '''
-        
+
         k_d = 0.2
         self.r_distance = np.exp(-k_d * abs(distances))
 
