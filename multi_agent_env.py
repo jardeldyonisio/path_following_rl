@@ -114,6 +114,9 @@ class MultiAgentPathFollowingEnv(gym.Env):
         for i, agent_plot in enumerate(self.agent_plots):
             if self.active_agents[i]:
                 x, y = self.positions[i]
+
+                x = np.array([x]) if np.isscalar(x) else np.array(x)
+                y = np.array([y]) if np.isscalar(y) else np.array(y)
                 agent_plot.set_data(x, y)  # Update agent position
                 
                 # Compute front indicator position (short line in the direction of orientation)

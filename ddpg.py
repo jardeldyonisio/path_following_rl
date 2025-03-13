@@ -13,12 +13,15 @@ This class implements a DDPG agent.
 '''
 
 class DDPGAgent:
-    def __init__(self, state_dim, action_dim, max_action, gamma=0.99, tau=0.005, buffer_size=100000, 
+    def __init__(self, state_dim, action_dim, max_action, min_speed = 0.05, max_speed = 1.0, gamma=0.99, tau=0.005, buffer_size=100000, 
                  actor_learning_rate=1e-4, critic_learning_rate=1e-3):
         
         # Parameters
         self.gamma = gamma
         self.tau = tau
+
+        self.min_speed = min_speed
+        self.max_speed = max_speed
 
         # Networks
         self.actor = Actor(state_dim, action_dim, max_action)
@@ -57,6 +60,9 @@ class DDPGAgent:
         
         if action.shape[0] == 1:  # Caso seja um vetor 1D
             action = action.reshape(-1, 2)  # Converte para (num_agents, 2)
+
+        # This line limits the minimal and maximal values of the speed and action
+        action[:, 1] = np.clip(action[:, 1], self.min_speed, self.max_speed)
 
         return action
     
