@@ -61,9 +61,6 @@ class DDPGAgent:
         if action.shape[0] == 1:  # Caso seja um vetor 1D
             action = action.reshape(-1, 2)  # Converte para (num_agents, 2)
 
-        # This line limits the minimal and maximal values of the speed and action
-        action[:, 1] = np.clip(action[:, 1], self.min_speed, self.max_speed)
-
         return action
     
     def update(self, batch_size):

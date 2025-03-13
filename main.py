@@ -15,7 +15,7 @@ This code it's the main file to run the environment.
 # env = NormalizedEnv(gym.make("CarRacing-v2"))
 env = MultiAgentPathFollowingEnv(num_agents=1)
 
-agent = DDPGAgent(state_dim=4, action_dim=2, max_action=1.0)
+agent = DDPGAgent(state_dim=6, action_dim=2, max_action=1.0)
 noise = OUNoise(env.action_space)
 batch_size = 128
 # agent = DDPGAgent(env)
@@ -26,13 +26,17 @@ avg_rewards = []
 episodes = 10000
 
 for episode in range(episodes):
-    state, _ = env.reset()
+    # Get the initial state
+    state = env.reset()
     episode_reward = 0
 
     for step in range(500):
+        # Get an action from the current state
         action = agent.get_action(state)
+
+        # Add noise to the action
         action = noise.get_action(action, step)
-        new_state, reward, done, _ = env.step(action)
+        new_state, reward, done = env.step(action)
         agent.memory.push(state, action, reward, new_state, done)
 
         if len(agent.memory) > batch_size:
