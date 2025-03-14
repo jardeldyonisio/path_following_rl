@@ -18,8 +18,8 @@ class MultiAgentPathFollowingEnv(gym.Env):
         self.replay_buffer = []
         
         self.action_space = gym.spaces.Box(
-            low=np.array([[0.1, -1.0]] * num_agents),
-            high=np.array([[1.0, 1.0]] * num_agents),
+            low=np.array([[0.3, -0.3]] * num_agents),
+            high=np.array([[0.4, 0.3]] * num_agents),
             dtype=np.float32
         )
         
@@ -38,7 +38,9 @@ class MultiAgentPathFollowingEnv(gym.Env):
         '''
         Reset the environment to the initial state.
         '''
+        self.current_goal_index = 0
         self.current_position = np.zeros((self.num_agents, 2))
+        self.update_goal()
         self.angular_velocity_dt = np.zeros(self.num_agents)
 
         # If will be created a new path for each episode, this line should be moved
@@ -48,14 +50,12 @@ class MultiAgentPathFollowingEnv(gym.Env):
         self.r_distance = 0.0
         self.r_angle = 0.0
         self.r_steering = 0.0
+        self.previus_position = np.zeros((self.num_agents, 2))
         self.failed = False
         self.success = False
         self.linear_velocity = None
         self.current_angular_velocity = None
         self.desired_angular_velocity = np.zeros(self.num_agents)
-
-        self.current_goal_index = 0
-        self.update_goal()
 
         self.active_agents = np.ones(self.num_agents, dtype=bool)
         return self.get_state()
@@ -64,8 +64,8 @@ class MultiAgentPathFollowingEnv(gym.Env):
         '''
         Get the current state of the environment.
         '''
-        # Should return the goal_distance, goal_angle, agent_current_position,
-        # agent_current_orientation
+        # Here we call the path_metrics, this function use goal metrics but this data can
+        # be delayed, so we need to fix it
         self.path_metrics()
 
         if self.linear_velocity is None:
@@ -73,27 +73,23 @@ class MultiAgentPathFollowingEnv(gym.Env):
         if self.current_angular_velocity is None:
             self.current_angular_velocity = np.array([0.0])
 
-        return np.column_stack((self.current_position, self.current_goal_distance, self.linear_velocity, self.current_angular_velocity, self.desired_angular_velocity))
+        return np.column_stack((self.current_goal_distance, self.linear_velocity, self.current_angular_velocity, self.desired_angular_velocity))
 
     def step(self, action):
         '''
         Step the environment forward using the given action.
         '''
-
-        # Maybe there is a issue where, because the position is updated and only
-        # afterthat the goal is updated. Like a delay in the goal update. The all
-        # tree functions should be called in the same order.
-        self.update_position(action)
-        self.update_goal()
         self.path_metrics()
+        self.update_goal()
+        self.update_position(action)
         
         step_reward = self.calculate_rewards()
         
-        self.failed = self.current_goal_distance > 5.0 or self.time > 150
+        self.failed = self.current_goal_distance > 15.0 or self.time > 1000
         self.success = self.current_goal_index == len(self.path) - 1
 
-        if self.failed:
-            step_reward = np.array([0.0])
+        # if self.failed:
+        #     step_reward -= 10.0 
 
         next_state = self.get_state()
         for i in range(self.num_agents):
@@ -172,56 +168,92 @@ class MultiAgentPathFollowingEnv(gym.Env):
         self.linear_velocity, self.angular_velocity = action[:, 0], action[:, 1]
         
         self.current_angular_velocity += self.angular_velocity * dt
+        # print("self.current_angular_velocity: ", self.current_angular_velocity)
+        # self.linear_velocity = self.linear_velocity * 0.1
         dx = self.linear_velocity * np.cos(self.current_angular_velocity)
         dy = self.linear_velocity * np.sin(self.current_angular_velocity)
         self.current_position += np.column_stack((dx, dy))
 
     def path_metrics(self):
         '''
-        This function calculates the distance and angle between each agent and the path.
+        This function calculates the distance, direction, and lateral deviation 
+        between the agent and the path.
         '''
-        
         self.current_goal_distance = np.linalg.norm(self.current_position[None, :, :] - self.current_goal_position, axis=2)
+        # self.previus_goal_distance = np.linalg.norm(self.previus_position[None, :, :] - self.current_goal_position, axis=2)
+        # print("self.current_goal_distance: ", self.current_goal_distance)
 
-        current_goal_direction = np.arctan2(self.current_position[:, 1] - self.current_goal_position[1],
-                                            self.current_position[:, 0] - self.current_goal_position[0])
+        self.current_goal_direction = np.arctan2(
+            self.future_goal_position[1] - self.current_goal_position[1],
+            self.future_goal_position[0] - self.current_goal_position[0]
+        )
+        # print("self.current_goal_direction: ", self.current_goal_direction)
+        # print("self_current_goal_position: ", self.current_goal_position)
+        # print("self.future_goal_position: ", self.future_goal_position)
 
+        self.agent_to_goal_direction = np.arctan2(
+            self.current_goal_position[1] - self.current_position[:, 1],
+            self.current_goal_position[0] - self.current_position[:, 0]
+        )
+
+        # Calcula a velocidade angular desejada (erro angular)
         if self.current_angular_velocity is None:
-            self.current_angular_velocity = np.zeros(self.num_agents)
+            self.desired_angular_velocity = np.zeros(self.num_agents)
         else:
-            self.desired_angular_velocity = current_goal_direction - self.current_angular_velocity
-    
-    def update_goal(self, goal_step = 1):
+            self.desired_angular_velocity = self.current_goal_direction - self.current_angular_velocity
+            # print("self.desired_angular_velocity: ", self.desired_angular_velocity)
+
+        # Erro lateral (desvio lateral em relação ao caminho)
+        self.lateral_error = np.sin(self.current_goal_direction - self.agent_to_goal_direction) * self.current_goal_distance
+        # print("self.lateral_error: ", self.lateral_error)
+
+
+    def update_goal(self, goal_step = 2):
         '''
         Calculate the goal for each agent based on the distance and angle to the path.
         '''
         if self.current_goal_index == 0:
             self.current_goal_position = self.path[0]
-            previus_goal_index = self.current_goal_index
+            self.previus_goal_position = self.current_goal_position
             self.current_goal_index += goal_step
+            self.future_goal_position = self.path[self.current_goal_index + goal_step]
         elif self.current_goal_distance < 0.2:
             self.current_goal_index += goal_step
             self.current_goal_position = self.path[self.current_goal_index]
-            self.r_forward += 1.0
+            self.previus_goal_position = self.path[self.current_goal_index - goal_step]
+            self.future_goal_position = self.path[self.current_goal_index + goal_step]
+            self.r_forward = 10.0
 
     def calculate_rewards(self):
         '''
         Calculate the reward for each agent based on the distance and angle to the path.
         '''
         
-        k_d = 0.5
+        k_d = 1.0
         # self.r_distance = -abs(distances)
         # print("self.current_goal_distance: ", self.current_goal_distance)
-        self.r_distance = np.exp((-k_d) * abs(self.current_goal_distance[0]))
-        # print("r_distance: ", self.r_distance)
+        # print("self.lateral_error: ", self.lateral_error)
+        if abs(self.lateral_error[0]) < 0.2:
+            self.r_distance = np.exp((-k_d) * abs(self.lateral_error[0]))
+            # print("self.r_distance: ", self.r_distance)
+        elif abs(self.lateral_error[0]) >= 0.6:
+            self.r_distance = -10
+        elif abs(self.lateral_error[0]) >= 1.0:
+            # print("self.r_distance: ", self.r_distance)
+            self.r_distance = -1000
+        # elif self.lateral_error[0] >= 0.2:
+            # self.r_distance -= np.array([10.0])
 
-        # self.r_angle += k_a * (-angles)
-        # print("angles: ", angles)
-        # self.r_angle = np.exp(-k_a * abs(angles))
-        # print("r_angle: ", self.r_angle)
+        # k_p = 1.0
+        # self.r_progress = self.previus_goal_distance - self.current_goal_distance
+        # print("self.r_progress: ", self.r_progress)
+
+        k_a = 1.0
+        self.r_angle = np.exp((-k_a) * abs(self.desired_angular_velocity))
+        # print("self.r_angle: ", self.r_angle)
 
         w_d = 5.0
-        w_a = 1.0
+        w_a = 2.0
 
         reward = w_d * self.r_distance + w_a * self.r_angle + self.r_forward
 
