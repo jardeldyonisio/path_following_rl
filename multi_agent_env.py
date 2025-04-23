@@ -15,6 +15,7 @@ class MultiAgentPathFollowingEnv(gym.Env):
     def __init__(self, num_agents=20, buffer_size=1000):
         super(MultiAgentPathFollowingEnv, self).__init__()
         self.num_agents = num_agents
+        self.num_goal = 1.0
         self.buffer_size = buffer_size
         self.replay_buffer = []
         
@@ -78,7 +79,7 @@ class MultiAgentPathFollowingEnv(gym.Env):
         
         step_reward = self.calculate_rewards()
         
-        self.failed = self.current_goal_distance > 15.0 or self.time > 150
+        self.failed = self.current_goal_distance > 15.0 or self.time > 500
         self.success = self.current_goal_index == len(self.path) - 1
 
         if self.failed:
@@ -200,9 +201,11 @@ class MultiAgentPathFollowingEnv(gym.Env):
         if self.current_angular_velocity is None:
             self.desired_angular_velocity = np.zeros(self.num_agents)
         else:
-            self.desired_angular_velocity = self.current_goal_direction - self.current_angular_velocity
+            # self.desired_angular_velocity = self.current_goal_direction - self.current_angular_velocity
+            self.desired_angular_velocity = self.current_goal_direction - self.agent_to_goal_direction
 
         self.yaw_angle_error = self.current_goal_direction - self.agent_to_goal_direction
+        # print("self.yaw_angle_error: ", self.yaw_angle_error)
 
         self.lateral_error = np.sin(self.yaw_angle_error) * self.current_goal_distance
         # print("self.lateral_error: ", self.lateral_error)
@@ -212,18 +215,30 @@ class MultiAgentPathFollowingEnv(gym.Env):
         Calculate the reward for each agent based on the distance and angle to the path.
         '''
         
-        k_ey = 1.0
         if abs(self.lateral_error) <= 0.5:
+            k_ey = 1.0
             r_ey = np.exp(-k_ey * abs(self.lateral_error))
         elif abs(self.lateral_error) > 0.5:
-            r_ey = np.array([0.0]).reshape(1, 1)
-            print("Lateral error too high, no reward")
+            k_ey = 10.0
+            # r_ey = np.array([0.0]).reshape(1, 1)
+            r_ey = np.exp(-k_ey * abs(self.lateral_error))
+            # print("r_ey: ", r_ey)
+            # print("Lateral error too high, no reward")
 
-        k_a = 0.3
-        r_a = -k_a * abs(self.yaw_angle_error)
+        print("abs(self.yaw_angle_error): ", abs(self.yaw_angle_error))
+        if abs(self.yaw_angle_error) < (np.pi / 2)/2:
+            k_a = 1.0
+            r_a = np.exp(-k_a * abs(self.yaw_angle_error))
+        elif abs(self.yaw_angle_error) >= (np.pi / 2)/2:
+            k_a = 10.0
+            r_a = -k_a * abs(self.yaw_angle_error)
+            # print("r_a: ", r_a)
+            # print("Yaw angle error too high, no reward")
+        # elif abs(self.yaw_angle_error) 
 
         w_ey = 1.0
-        reward = (w_ey * r_ey) + r_a + self.r_forward
+        w_a = 1.0
+        reward = (w_ey * r_ey) + (w_a * r_a) + self.r_forward
 
         return reward
 
