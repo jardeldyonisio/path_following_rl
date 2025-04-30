@@ -15,13 +15,14 @@ class MultiAgentPathFollowingEnv(gym.Env):
     def __init__(self, num_agents=20, buffer_size=1000):
         super(MultiAgentPathFollowingEnv, self).__init__()
         self.num_agents = num_agents
-        self.num_goal = 1.0
+        self.num_goal = 15
+
         self.buffer_size = buffer_size
         self.replay_buffer = []
         
         self.action_space = gym.spaces.Box(
-            low=np.array([[0.1, -0.5]] * num_agents),
-            high=np.array([[0.3, 0.5]] * num_agents),
+            low=np.array([[0.9, -0.5]] * num_agents),
+            high=np.array([[1.0, 0.5]] * num_agents),
             dtype=np.float32
         )
         
@@ -32,9 +33,12 @@ class MultiAgentPathFollowingEnv(gym.Env):
             dtype=np.float32
         )
         
+        self.current_goal_position = np.array([0.0, 0.0])
         self.path = self.generate_path()
+        self.goal = self.path
         self.reset()
         self.r_ey = 0.0
+        self.r_a = 0.0
 
     def reset(self):
         '''
@@ -50,7 +54,11 @@ class MultiAgentPathFollowingEnv(gym.Env):
         self.failed = False
         self.success = False
         self.linear_velocity = None
-        self.desired_angular_velocity = np.zeros(self.num_agents)
+        self.yaw_angle_error = np.zeros(self.num_agents)
+
+        self.goal_reached = False
+        self.multi_reached = False
+        self.r_forward = np.array([0.0]).reshape(1, 1)
 
         self.active_agents = np.ones(self.num_agents, dtype=bool)
         return self.get_state()
@@ -59,8 +67,6 @@ class MultiAgentPathFollowingEnv(gym.Env):
         '''
         Get the current state of the environment.
         '''
-        # Here we call the path_metrics, this function use goal metrics but this data can
-        # be delayed, so we need to fix it
         self.update()
 
         if self.linear_velocity is None:
@@ -68,7 +74,10 @@ class MultiAgentPathFollowingEnv(gym.Env):
         if self.current_angular_velocity is None:
             self.current_angular_velocity = np.array([0.0])
 
-        return np.column_stack((self.current_goal_distance, self.linear_velocity, self.current_angular_velocity, self.desired_angular_velocity))
+        return np.column_stack((self.current_goal_distance, 
+                                self.linear_velocity, 
+                                self.current_angular_velocity, 
+                                self.yaw_angle_error))
 
     def step(self, action):
         '''
@@ -79,11 +88,10 @@ class MultiAgentPathFollowingEnv(gym.Env):
         
         step_reward = self.calculate_rewards()
         
-        self.failed = self.current_goal_distance > 15.0 or self.time > 500
-        self.success = self.current_goal_index == len(self.path) - 1
+        self.failed = self.current_goal_distance > 15.0 or self.time > 1000
 
-        if self.failed:
-            step_reward = np.array([0.0]).reshape(1, 1)
+        # if self.failed:
+        #     step_reward = np.array([0.0]).reshape(1, 1)
 
         next_state = self.get_state()
         for i in range(self.num_agents):
@@ -96,7 +104,7 @@ class MultiAgentPathFollowingEnv(gym.Env):
         done = self.success or self.failed
         return next_state, step_reward, done
 
-    def render(self):
+    def render(self, mode='human'):
         if not hasattr(self, 'fig'):
             # Create the plot
             self.fig, self.ax = plt.subplots()
@@ -108,6 +116,9 @@ class MultiAgentPathFollowingEnv(gym.Env):
 
             # Current goal marker
             self.current_goal_marker, = self.ax.plot([], [], 'rx', markersize=5, label='Current Goal')
+
+            # Current multi-goals marker
+            self.multi_goals_marker, = self.ax.plot([], [], 'gx', markersize=5, label='Multi Goals')
 
             # Title text placeholder for Speed, Steering, and Goal Distance
             self.title_text = self.ax.set_title("Speed: 0.00 m/s | Steering: 0.00 rad | Goal Dist: 0.00m")
@@ -130,7 +141,7 @@ class MultiAgentPathFollowingEnv(gym.Env):
                 x, y = self.current_position[i]
                 # Update agent position
 
-                # Garante que x e y sejam arrays NumPy com pelo menos um elemento
+                # Ensure x and y are NumPy arrays with at least one element
                 x = np.array([x]) if np.isscalar(x) else np.array(x)
                 y = np.array([y]) if np.isscalar(y) else np.array(y)
                 agent_plot.set_data(x, y)  
@@ -147,6 +158,11 @@ class MultiAgentPathFollowingEnv(gym.Env):
 
         # Update goal marker
         self.current_goal_marker.set_data(goal_xs, goal_ys)
+
+        # Update multi-goals marker
+        if hasattr(self, 'current_multi_goals_position') and len(self.current_multi_goals_position) > 0:
+            multi_goals_x, multi_goals_y = zip(*self.current_multi_goals_position)
+            self.multi_goals_marker.set_data(multi_goals_x, multi_goals_y)
 
         # Update title dynamically with speed, steering, and goal distance
         self.title_text.set_text(f"Goal Dist: {self.current_goal_distance[0][0]:.2f}m")
@@ -172,21 +188,40 @@ class MultiAgentPathFollowingEnv(gym.Env):
         '''
         Update the goal and calculate the path metrics for each agent.
         '''
+        self.current_goal_distance = np.linalg.norm(self.current_position[None, :, :] - self.current_goal_position, axis=2)
         # Update goal
         if self.current_goal_index == 0:
             self.current_goal_position = self.path[0]
-            self.previus_goal_position = self.current_goal_position
             self.current_goal_index += goal_step
             self.future_goal_position = self.path[self.current_goal_index + goal_step]
+            self.current_multi_goals_position = self.path[self.current_goal_index + 1:goal_step * self.num_goal: goal_step]
         elif self.current_goal_distance < 0.2:
             self.current_goal_index += goal_step
             self.current_goal_position = self.path[self.current_goal_index]
-            self.previus_goal_position = self.path[self.current_goal_index - goal_step]
+            # print("current_goal_position: ", self.current_goal_position)
             self.future_goal_position = self.path[self.current_goal_index + goal_step]
-            self.r_forward = np.array([10.0]).reshape(1, 1)
+            # self.r_forward = np.array([100.0]).reshape(1, 1)
+            self.goal_reached = True
+            self.current_multi_goals_position = self.path[self.current_goal_index + 1:self.current_goal_index + self.num_goal: goal_step]
+            # print("self.current_multi_goals_position: ", self.current_multi_goals_position)
+        elif np.any(self.current_multi_goals_distance < 0.2):
+            # Encontra o índice do próximo goal
+            closest_goal_index = np.argmin(self.current_multi_goals_distance)
+
+            self.current_goal_index = self.current_goal_index + closest_goal_index + 1
+            
+            self.current_goal_position = self.path[self.current_goal_index]
+            self.future_goal_position = self.path[self.current_goal_index + goal_step]
+
+            # self.r_forward = np.array([50.0]).reshape(1, 1)
+            self.multi_reached = True
+            
+            # Atualiza a lista de multi goals (remove o objetivo alcançado e avança para o próximo)
+            self.current_multi_goals_position = self.path[self.current_goal_index + 1:self.current_goal_index + self.num_goal: goal_step]
 
         # Calculate path metrics
-        self.current_goal_distance = np.linalg.norm(self.current_position[None, :, :] - self.current_goal_position, axis=2)
+
+        self.current_multi_goals_distance = np.linalg.norm(self.current_position[None, :, :] - self.current_multi_goals_position, axis=2)
 
         self.current_goal_direction = np.arctan2(
             self.future_goal_position[1] - self.current_goal_position[1],
@@ -199,13 +234,10 @@ class MultiAgentPathFollowingEnv(gym.Env):
         )
 
         if self.current_angular_velocity is None:
-            self.desired_angular_velocity = np.zeros(self.num_agents)
+            self.yaw_angle_error = np.zeros(self.num_agents)
         else:
-            # self.desired_angular_velocity = self.current_goal_direction - self.current_angular_velocity
-            self.desired_angular_velocity = self.current_goal_direction - self.agent_to_goal_direction
-
-        self.yaw_angle_error = self.current_goal_direction - self.agent_to_goal_direction
-        # print("self.yaw_angle_error: ", self.yaw_angle_error)
+            # self.yaw_angle_error = self.current_goal_direction - self.current_angular_velocity
+            self.yaw_angle_error = self.current_goal_direction - self.agent_to_goal_direction
 
         self.lateral_error = np.sin(self.yaw_angle_error) * self.current_goal_distance
         # print("self.lateral_error: ", self.lateral_error)
@@ -216,29 +248,37 @@ class MultiAgentPathFollowingEnv(gym.Env):
         '''
         
         if abs(self.lateral_error) <= 0.5:
-            k_ey = 1.0
-            r_ey = np.exp(-k_ey * abs(self.lateral_error))
-        elif abs(self.lateral_error) > 0.5:
-            k_ey = 10.0
-            # r_ey = np.array([0.0]).reshape(1, 1)
-            r_ey = np.exp(-k_ey * abs(self.lateral_error))
-            # print("r_ey: ", r_ey)
-            # print("Lateral error too high, no reward")
+            k_ey = 2.0
+            # self.r_ey = -k_ey * abs(self.lateral_error)
+            self.r_ey = 1 - k_ey * abs(self.lateral_error)
+            # print("self.r_ey: ", self.r_ey)
+        # elif abs(self.lateral_error) > 0.5:
+        #     k_ey = 10.0
+        #     self.r_ey = -k_ey * abs(self.lateral_error)
 
-        print("abs(self.yaw_angle_error): ", abs(self.yaw_angle_error))
-        if abs(self.yaw_angle_error) < (np.pi / 2)/2:
-            k_a = 1.0
-            r_a = np.exp(-k_a * abs(self.yaw_angle_error))
-        elif abs(self.yaw_angle_error) >= (np.pi / 2)/2:
-            k_a = 10.0
-            r_a = -k_a * abs(self.yaw_angle_error)
-            # print("r_a: ", r_a)
-            # print("Yaw angle error too high, no reward")
-        # elif abs(self.yaw_angle_error) 
+        if abs(self.yaw_angle_error) <= (np.pi / 2)/2:
+            k_a = 5.0
+            # self.r_a = -k_a * abs(self.yaw_angle_error)
+            self.r_a = 1 - k_a * abs(self.yaw_angle_error)
+            # print("self.r_a: ", self.r_a)
+        # elif abs(self.yaw_angle_error) > (np.pi / 2)/2:
+        #     k_a = 10.0
+        #     self.r_a = -k_a * abs(self.yaw_angle_error)
+
+        if self.goal_reached:
+            self.r_forward = np.array([100.0]).reshape(1, 1)
+            self.goal_reached = False
+
+        if self.multi_reached:
+            self.r_forward = np.array([50.0]).reshape(1, 1)
+            self.multi_reached = False
 
         w_ey = 1.0
         w_a = 1.0
-        reward = (w_ey * r_ey) + (w_a * r_a) + self.r_forward
+        # reward = (w_ey * self.r_ey) + (w_a * r_a) + self.r_forward
+        reward = (w_ey * self.r_ey) + (w_a * self.r_a) + self.r_forward
+        self.r_forward = np.array([0.0]).reshape(1, 1)
+        # print("self.r_forward: ", self.r_forward)
 
         return reward
 

@@ -72,7 +72,7 @@ class Critic(nn.Module):
         # Concatenating state and action
         # print(f"State shape: {state.shape}, Action shape: {action.shape}")
 
-        sa = torch.cat([state, action], dim=2)
+        sa = torch.cat([state, action], 1)
         
         # Passing the state through the first layer applying the ReLU 
         # activation function

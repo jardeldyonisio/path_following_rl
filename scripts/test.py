@@ -1,7 +1,7 @@
 import torch
 import numpy as np
-from multi_agent_env import MultiAgentPathFollowingEnv
-from ddpg import DDPGAgent
+from environment.multi_agent_env import MultiAgentPathFollowingEnv
+from agent.ddpg import DDPGAgent
 
 # Definir o ambiente
 env = MultiAgentPathFollowingEnv(num_agents=1)

@@ -1,11 +1,11 @@
 import sys
-import gym
 import numpy as np
 import matplotlib.pyplot as plt
 
-from multi_agent_env import MultiAgentPathFollowingEnv
-from ddpg import DDPGAgent
-from utils import *
+# from multi_agent_env import MultiAgentPathFollowingEnv
+from simple_env import SimplePathFollowingEnv
+from agent.ddpg import DDPGAgent
+from utils.utils import *
 
 '''
 This code it's the main file to run the environment.
@@ -13,7 +13,8 @@ This code it's the main file to run the environment.
 
 # Creating the environment
 # env = NormalizedEnv(gym.make("CarRacing-v2"))
-env = MultiAgentPathFollowingEnv(num_agents=1)
+env = SimplePathFollowingEnv()
+# env = MultiAgentPathFollowingEnv(num_agents=1)
 
 agent = DDPGAgent(state_dim=4, action_dim=2, max_action=1.0)
 noise = OUNoise(env.action_space)
@@ -36,7 +37,7 @@ for episode in range(episodes):
         action = agent.get_action(state)
 
         # Add noise to the action
-        action = noise.get_action(action, step)
+        # action = noise.get_action(action, step)
         new_state, reward, done = env.step(action)
         agent.memory.push(state, action, reward, new_state, done)
 
@@ -51,7 +52,7 @@ for episode in range(episodes):
             break
         env.render()
     rewards.append(episode_reward)
-    avg_rewards.append(np.mean(reward[-10:]))
+    # avg_rewards.append(np.mean(reward[-10:]))
 
 agent.save_model("ddpg_model.pth")
 

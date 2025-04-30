@@ -5,30 +5,33 @@ import torch.nn as nn
 import torch.optim as optim
 
 from models import *
-from utils import Memory
-from ddpg import Actor, Critic
+from utils.utils import Memory
+from agent.ddpg import Actor, Critic
 
 '''
 This class implements a DDPG agent.
 '''
 
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
 class DDPGAgent:
-    def __init__(self, state_dim, action_dim, max_action, min_speed = 0.05, max_speed = 1.0, gamma=0.99, tau=0.005, buffer_size=100000, 
+    def __init__(self, state_dim, action_dim, max_action, gamma=0.99, tau=0.005, buffer_size=100000, 
                  actor_learning_rate=1e-4, critic_learning_rate=1e-3):
         
         # Parameters
         self.gamma = gamma
         self.tau = tau
 
-        self.min_speed = min_speed
-        self.max_speed = max_speed
-
         # Networks
         self.actor = Actor(state_dim, action_dim, max_action)
+        # self.actor = Actor(state_dim, action_dim, max_action).to(device)
         self.actor_target = Actor(state_dim, action_dim, max_action)
+        # self.actor_target = Actor(state_dim, action_dim, max_action).to(device)
         
         self.critic = Critic(state_dim, action_dim)
+        # self.critic = Critic(state_dim, action_dim).to(device)
         self.critic_target = Critic(state_dim, action_dim)
+        # self.critic_target = Critic(state_dim, action_dim).to(device)
         
         for target_param, param in zip(self.actor_target.parameters(), self.actor.parameters()):
             target_param.data.copy_(param.data)
@@ -41,26 +44,19 @@ class DDPGAgent:
         self.critic_criterion = nn.MSELoss()
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr = actor_learning_rate)
         self.critic_optimizer = optim.Adam(self.critic.parameters(), lr = critic_learning_rate)
-    
-    # def get_action(self, state):
-    #     '''
-    #     This function is responsible for getting the action from the actor network.
-    #     '''
-    #     state = torch.FloatTensor(state).unsqueeze(0)
-    #     print('state: ', state)
-    #     action = self.actor.forward(state)
-    #     # action = self.actor(state).cpu().detach().numpy().flatten()
-    #     action = action.detach().numpy()[0,0]
-    #     print("action: ", action)
-    #     return action
 
     def get_action(self, state):
         state = torch.FloatTensor(state).unsqueeze(0)
-        action = self.actor.forward(state).detach().numpy()
-        
-        if action.shape[0] == 1:  # Caso seja um vetor 1D
-            action = action.reshape(-1, 2)  # Converte para (num_agents, 2)
+        # print("state: ", state)
+        action = self.actor.forward(state).detach().numpy()[0]
+        # action = self.actor.forward(state).detach().numpy()[0,0]
+        # print("action: ", action)
 
+        # linear action
+        action[0] = np.clip(action[0], 0.05, 1.0)
+
+        # angular action
+        action[1] = np.clip(action[1], -1.0, 1.0)
         return action
     
     def update(self, batch_size):
@@ -74,10 +70,15 @@ class DDPGAgent:
 
         # Convert the experiences to PyTorch tensors
         # for training with the networks
-        states = torch.FloatTensor(np.array(states))
-        actions = torch.FloatTensor(np.array(actions))
-        rewards = torch.FloatTensor(np.array(rewards))
-        next_states = torch.FloatTensor(np.array(next_states))
+        # states = torch.FloatTensor(np.array(states))
+        # actions = torch.FloatTensor(np.array(actions))
+        # rewards = torch.FloatTensor(np.array(rewards))
+        # next_states = torch.FloatTensor(np.array(next_states))
+        states = torch.FloatTensor(states)
+        # states = torch.FloatTensor(states).to(device)
+        actions = torch.FloatTensor(actions)
+        rewards = torch.FloatTensor(rewards)
+        next_states = torch.FloatTensor(next_states)
 
         # Critic loss
         Qvals = self.critic.forward(states, actions)
