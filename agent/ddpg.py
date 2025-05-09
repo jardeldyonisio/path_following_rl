@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 
 from models import *
-from utils.utils import Memory
+from utils.utils import ReplayBuffer
 from agent.ddpg import Actor, Critic
 
 '''
@@ -40,7 +40,7 @@ class DDPGAgent:
             target_param.data.copy_(param.data)
 
         # Training
-        self.memory = Memory(buffer_size)
+        self.memory = ReplayBuffer(buffer_size)
         self.critic_criterion = nn.MSELoss()
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr = actor_learning_rate)
         self.critic_optimizer = optim.Adam(self.critic.parameters(), lr = critic_learning_rate)
@@ -85,6 +85,7 @@ class DDPGAgent:
         next_actions = self.actor_target.forward(next_states)
         next_Q = self.critic_target.forward(next_states, next_actions.detach())
         Qprime = rewards + self.gamma * next_Q
+        # Qprime = rewards + (1 - dones) * self.gamma * next_Q
         critic_loss = self.critic_criterion(Qvals, Qprime)
         
         # Actor loss

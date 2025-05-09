@@ -64,6 +64,7 @@ class SimplePathFollowingEnv(gym.Env):
         self.current_goal_position : float = self.path[0]
         self.current_position : np.ndarray = np.array([-0.3, 0.0])
         self.current_goals_window_position = self.path[1:self.goal_step * self.num_goals_window: self.goal_step]
+        self.is_minor_goal_reached : bool = False
 
         self.arrived : bool = False
         self.timeout : bool = False
@@ -90,10 +91,8 @@ class SimplePathFollowingEnv(gym.Env):
         info = self._get_info()
         self.tick =+ 1
 
-        # self.replay_buffer.append((self.get_state(), action, reward, observation))
-
-        return observation, reward, truncated
-        # return observation, reward, terminated, truncated, info
+        # return observation, reward, truncated
+        return observation, reward, terminated, truncated, info
     
     def render(self, mode='human'):
         '''
@@ -131,8 +130,9 @@ class SimplePathFollowingEnv(gym.Env):
         self.agent_marker.set_data([agent_x], [agent_y])
 
         # print("self.current_goals_window_position: ", self.current_goals_window_position)
-        multi_goals_x, multi_goals_y = zip(*self.current_goals_window_position)
-        self.current_goals_window_marker.set_data(multi_goals_x, multi_goals_y)
+        if self.current_goals_window_position.size > 0:
+            multi_goals_x, multi_goals_y = zip(*self.current_goals_window_position)
+            self.current_goals_window_marker.set_data(multi_goals_x, multi_goals_y)
 
         self.distance_title.set_text(f'Distance to Goal: {self._goal_distance():.2f}m')
 
@@ -176,6 +176,9 @@ class SimplePathFollowingEnv(gym.Env):
         reward_goal_reached = 0.0
         if self._is_goal_reached():
             reward_goal_reached = 10.0
+        # if self._update_minor_goal():
+        if self.is_minor_goal_reached:
+            reward_goal_reached = 5.0
         rewards = reward_goal_reached
 
         return rewards
@@ -192,21 +195,38 @@ class SimplePathFollowingEnv(gym.Env):
         '''
         if self._goal_distance() < self.goal_threshold:
             self.current_goal_index += self.goal_step
-            self.current_goal_position = self.path[self.current_goal_index]
+            if self.current_goal_index < len(self.path):
+                self.current_goal_position = self.path[self.current_goal_index]
+            else:
+                self.current_goal_position = self.path[-1]  # Set to the last goal if index exceeds bounds
             self._generate_goals_window()
             return True
-        # elif np.any(self._get_distance(self.current_position, self.current_goals_window_position)) < self.goals_window_threshold:
-        #     closest_goal_index = np.argmin()
-        #     self.current_goal_index = closest_goal_index + closest_goal_index + 1
-        #     self.current_goals_window_position = self.path[self.current_goal_index + 1:self.current_goal_index + self.num_goals_window: self.goal_step]
-        #     return True
+        self._update_minor_goal()
         return False
+    
+    def _update_minor_goal(self):
+        '''
+        Update the minor goal for the agent.
+        '''
+        # print("self.current_goals_window_position: ", self.current_goals_window_position)
+        # Calculate distances between current position and all goals in window
+        distances = np.array([self._get_distance(self.current_position, goal) 
+                         for goal in self.current_goals_window_position])
+        
+        if np.any(distances < 0.2):
+            closest_goal_index = np.argmin(distances)
+            self.current_goal_index = closest_goal_index + self.current_goal_index + 1
+            self.current_goal_position = self.path[self.current_goal_index]
+            self._generate_goals_window()
+            self.is_minor_goal_reached = True
+        self.is_minor_goal_reached = False
     
     def _is_success(self):
         '''
         Check if the agent is in the goal.
         '''
         if self._get_distance(self.current_position, self.path[-1]) < self.goal_threshold:
+            print("Final goal reached")
             return True
         return False
     
