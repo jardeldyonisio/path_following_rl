@@ -53,10 +53,13 @@ class DDPGAgent:
         # print("action: ", action)
 
         # linear action
-        action[0] = np.clip(action[0], 0.05, 1.0)
+        action[0] = np.clip(action[0], 0.01, 1.0)
+        # print("action[0]: ", action[0])
+        # action[0] = np.clip(action[0], 0.05, 1.0)
 
         # angular action
         action[1] = np.clip(action[1], -1.0, 1.0)
+
         return action
     
     def update(self, batch_size):

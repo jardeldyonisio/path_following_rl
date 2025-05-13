@@ -17,8 +17,10 @@ class SimplePathFollowingEnv(gym.Env):
         
         '''
         super().__init__()
+        self.goal_step = 1
+        self.num_goals_window = 15
+        self.out_of_bound_threshold = (self.goal_step * self.num_goals_window) + self.goal_step
         self.goal_threshold = 0.2
-        self.out_of_bound_threshold = 10.0
 
         min_linear_velocity = 0.05
         max_linear_velocity = 1.0
@@ -32,8 +34,8 @@ class SimplePathFollowingEnv(gym.Env):
         min_yaw_error = -2*np.pi
         max_yaw_error = 2*np.pi
 
-        self.goal_step = 1
-        self.num_goals_window = 15
+
+        self.terminated_counter : int = 0
         
         self.action_space = gym.spaces.Box(
             low=np.array([min_linear_velocity, min_angular_velocity]),
@@ -65,6 +67,8 @@ class SimplePathFollowingEnv(gym.Env):
         self.current_position : np.ndarray = np.array([-0.3, 0.0])
         self.current_goals_window_position = self.path[1:self.goal_step * self.num_goals_window: self.goal_step]
         self.is_minor_goal_reached : bool = False
+        self.goal_reached_counter : int = 0
+        self.minor_goal_reacher_counter : int = 0
 
         self.arrived : bool = False
         self.timeout : bool = False
@@ -76,20 +80,26 @@ class SimplePathFollowingEnv(gym.Env):
         return observation
         # return observation, info
 
-    def step(self, action, dt : float=0.1):
+    def step(self, action, dt : float=0.5):
         '''
         Step the environment with the given action.
         '''
         self.linear_velocity, self.angular_velocity = action
-        self.angular_velocity = self.angular_velocity * dt
+        self.angular_velocity = self.angular_velocity * dt 
 
+        self._is_goal_reached()
+        # calculate lateral error
         terminated = self._is_success()
+
+        if self.terminated_counter:
+            self.terminated_counter += 1
+
         truncated = self._is_truncated()
 
         reward = self._rewards()
         observation = self._get_obs()
         info = self._get_info()
-        self.tick =+ 1
+        self.tick += 1
 
         # return observation, reward, truncated
         return observation, reward, terminated, truncated, info
@@ -134,7 +144,7 @@ class SimplePathFollowingEnv(gym.Env):
             multi_goals_x, multi_goals_y = zip(*self.current_goals_window_position)
             self.current_goals_window_marker.set_data(multi_goals_x, multi_goals_y)
 
-        self.distance_title.set_text(f'Distance to Goal: {self._goal_distance():.2f}m')
+        self.distance_title.set_text(f'Goal distance: {self._goal_distance():.2f}m')
 
         self.fig.canvas.draw_idle()
         self.fig.canvas.flush_events()
@@ -146,6 +156,8 @@ class SimplePathFollowingEnv(gym.Env):
         pass
     
     def _get_info(self):
+        # How many goals reached
+        # How many minor goals reached
         pass
 
     def _update_agent_position(self):
@@ -174,12 +186,20 @@ class SimplePathFollowingEnv(gym.Env):
         Calculate the reward based on the current state.
         '''
         reward_goal_reached = 0.0
-        if self._is_goal_reached():
+        reward_minor_goal_reached = 0.0
+        sucess_reward = 0.0
+
+        k_d = 1.0
+
+        # reward_lateral_error
+
+        if self.is_goal_reached:
             reward_goal_reached = 10.0
-        # if self._update_minor_goal():
         if self.is_minor_goal_reached:
-            reward_goal_reached = 5.0
-        rewards = reward_goal_reached
+            reward_minor_goal_reached = 5.0
+        if self._is_success():
+            sucess_reward = 100.0
+        rewards = reward_goal_reached + sucess_reward + reward_minor_goal_reached
 
         return rewards
     
@@ -193,15 +213,20 @@ class SimplePathFollowingEnv(gym.Env):
         '''
         Check if the goal is reached and update if in this case.
         '''
+        self.reward_goal_reached = 0.0
         if self._goal_distance() < self.goal_threshold:
             self.current_goal_index += self.goal_step
+            self.goal_reached_counter += 1
+            print("self.goal_reached_counter: ", self.goal_reached_counter)
             if self.current_goal_index < len(self.path):
                 self.current_goal_position = self.path[self.current_goal_index]
             else:
                 self.current_goal_position = self.path[-1]  # Set to the last goal if index exceeds bounds
             self._generate_goals_window()
+            self.is_goal_reached = True
             return True
         self._update_minor_goal()
+        self.is_goal_reached = False
         return False
     
     def _update_minor_goal(self):
@@ -214,12 +239,16 @@ class SimplePathFollowingEnv(gym.Env):
                          for goal in self.current_goals_window_position])
         
         if np.any(distances < 0.2):
+            self.minor_goal_reacher_counter += 1
+            print("self.minor_goal_reacher_counter: ", self.minor_goal_reacher_counter)
             closest_goal_index = np.argmin(distances)
             self.current_goal_index = closest_goal_index + self.current_goal_index + 1
             self.current_goal_position = self.path[self.current_goal_index]
             self._generate_goals_window()
             self.is_minor_goal_reached = True
+            return True
         self.is_minor_goal_reached = False
+        return False
     
     def _is_success(self):
         '''
@@ -253,6 +282,18 @@ class SimplePathFollowingEnv(gym.Env):
         Create path for the agent to follow.
         '''
         return np.array([[i, 0.0] for i in range(100)])
+
+        # base_x = np.arange(100)
+        # base_y = np.zeros(100)
+
+        # return np.column_stack((base_x, 3 * np.sin(base_x / 3)))
+
+        # x = np.arange(100)
+    
+        # # Ajuste crítico: deslocamos a lombada para começar em x=0
+        # y = 3.0 * np.exp(-0.5 * ((x - 80) / 10)**2)  # Pico em x=30, largura 10
+        
+        # return np.column_stack((x, y))
     
     def _get_angle_error(self):
         '''
