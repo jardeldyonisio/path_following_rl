@@ -25,17 +25,19 @@ memory = ReplayBuffer(buffer_size)
 for episode in range(episodes):
     # Get the initial state
     observation = env.reset()
+    print("observation: ", observation)
     episode_reward = 0
 
     for step in range(1000):
         action = agent.get_action(observation)
-        # print("action: ", action)
+        print("action: ", action)
         action = noise.get_action_from_raw_action(action, step)
         # print("action noise: ", action)
         next_observation, reward, terminated, truncated, info = env.step(action)
+
         memory.add(observation, action, reward, next_observation, terminated, truncated, info)
 
-        state = next_observation
+        observation = next_observation
         episode_reward += reward
 
         if terminated or truncated:
