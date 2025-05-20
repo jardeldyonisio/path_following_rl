@@ -22,15 +22,15 @@ class DDPGAgent:
         self.tau = tau
 
         # Networks
-        self.actor = Actor(state_dim, action_dim, max_action)
-        # self.actor = Actor(state_dim, action_dim, max_action).to(device)
-        self.actor_target = Actor(state_dim, action_dim, max_action)
-        # self.actor_target = Actor(state_dim, action_dim, max_action).to(device)
+        # self.actor = Actor(state_dim, action_dim, max_action)
+        self.actor = Actor(state_dim, action_dim, max_action).to(device)
+        # self.actor_target = Actor(state_dim, action_dim, max_action)
+        self.actor_target = Actor(state_dim, action_dim, max_action).to(device)
         
-        self.critic = Critic(state_dim, action_dim)
-        # self.critic = Critic(state_dim, action_dim).to(device)
-        self.critic_target = Critic(state_dim, action_dim)
-        # self.critic_target = Critic(state_dim, action_dim).to(device)
+        # self.critic = Critic(state_dim, action_dim)
+        self.critic = Critic(state_dim, action_dim).to(device)
+        # self.critic_target = Critic(state_dim, action_dim)
+        self.critic_target = Critic(state_dim, action_dim).to(device)
         
         for target_param, param in zip(self.actor_target.parameters(), self.actor.parameters()):
             target_param.data.copy_(param.data)
@@ -45,8 +45,10 @@ class DDPGAgent:
         self.critic_optimizer = optim.Adam(self.critic.parameters(), lr = critic_learning_rate)
 
     def get_action(self, state):
-        state = torch.FloatTensor(state).unsqueeze(0)
-        action = self.actor.forward(state).detach().numpy()[0]
+        # state = torch.FloatTensor(state).unsqueeze(0)
+        state = torch.FloatTensor(state).unsqueeze(0).to(device)
+        # action = self.actor.forward(state).detach().numpy()[0]
+        action = self.actor.forward(state).detach().cpu().numpy()[0]
 
         # linear action
         action[0] = np.clip(action[0], 0.01, 1.0)
@@ -71,11 +73,11 @@ class DDPGAgent:
         # actions = torch.FloatTensor(np.array(actions))
         # rewards = torch.FloatTensor(np.array(rewards))
         # next_states = torch.FloatTensor(np.array(next_states))
-        states = torch.FloatTensor(states)
+        states = torch.FloatTensor(states).to(device)
         # states = torch.FloatTensor(states).to(device)
-        actions = torch.FloatTensor(actions)
-        rewards = torch.FloatTensor(rewards)
-        next_states = torch.FloatTensor(next_states)
+        actions = torch.FloatTensor(actions).to(device)
+        rewards = torch.FloatTensor(rewards).to(device)
+        next_states = torch.FloatTensor(next_states).to(device)
 
         # Critic loss
         Qvals = self.critic.forward(states, actions)
