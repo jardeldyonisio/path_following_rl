@@ -2,10 +2,9 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 
-# from multi_agent_env import MultiAgentPathFollowingEnv
-from simple_env import SimplePathFollowingEnv
+from environment.simple import SimplePathFollowingEnv
 from agent.ddpg import DDPGAgent
-from utils.utils import OUNoise, ReplayBuffer, GaussianStrategy
+from utils.utils import OUNoise, ReplayBuffer
 
 '''
 This code it's the main file to run the environment.
@@ -25,12 +24,12 @@ memory = ReplayBuffer(buffer_size)
 for episode in range(episodes):
     # Get the initial state
     observation = env.reset()
-    print("observation: ", observation)
+    # print("observation: ", observation)
     episode_reward = 0
 
     for step in range(1000):
         action = agent.get_action(observation)
-        print("action: ", action)
+        # print("action: ", action)
         action = noise.get_action_from_raw_action(action, step)
         # print("action noise: ", action)
         next_observation, reward, terminated, truncated, info = env.step(action)
@@ -47,7 +46,7 @@ for episode in range(episodes):
     rewards.append(episode_reward)
     # avg_rewards.append(np.mean(reward[-10:]))
 
-agent.save_model("ddpg_model.pth")
+agent.save_model("models/ddpg_model.pth")
 
 plt.plot(rewards)
 plt.plot(avg_rewards)

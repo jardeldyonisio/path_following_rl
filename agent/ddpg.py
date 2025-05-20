@@ -1,10 +1,9 @@
 import torch
 import numpy as np
-import torch.autograd
 import torch.nn as nn
 import torch.optim as optim
 
-from models import *
+from agent.models import Actor, Critic
 from utils.utils import ReplayBuffer
 from agent.ddpg import Actor, Critic
 
@@ -47,15 +46,10 @@ class DDPGAgent:
 
     def get_action(self, state):
         state = torch.FloatTensor(state).unsqueeze(0)
-        # print("state: ", state)
         action = self.actor.forward(state).detach().numpy()[0]
-        # action = self.actor.forward(state).detach().numpy()[0,0]
-        # print("action: ", action)
 
         # linear action
         action[0] = np.clip(action[0], 0.01, 1.0)
-        # print("action[0]: ", action[0])
-        # action[0] = np.clip(action[0], 0.05, 1.0)
 
         # angular action
         action[1] = np.clip(action[1], -1.0, 1.0)

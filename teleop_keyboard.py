@@ -1,7 +1,7 @@
 import time
 import numpy as np
 from pynput import keyboard
-from simple_env import SimplePathFollowingEnv
+from environment.simple import SimplePathFollowingEnv
 
 class ManualControl:
     def __init__(self, env):

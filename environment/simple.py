@@ -34,8 +34,7 @@ class SimplePathFollowingEnv(gym.Env):
         min_yaw_error = -2*np.pi
         max_yaw_error = 2*np.pi
 
-
-        self.terminated_counter : int = 0
+        self.terminated_counter : int = 1
         
         self.action_space = gym.spaces.Box(
             low=np.array([min_linear_velocity, min_angular_velocity]),
@@ -49,13 +48,19 @@ class SimplePathFollowingEnv(gym.Env):
             high=np.array([self.max_goal_distance, max_linear_velocity, max_angular_velocity, max_yaw_error]),
             dtype=np.float32
         )
+
+        self.path = self._create_path()
         
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
         '''
         Reset the environment to the initial state.
         '''
         super().reset(seed=seed)
-        self.path = self._create_path()
+        if self.terminated_counter % 5 == 0:
+            self.path = self._switch_path()
+            self.terminated_counter += 1
+            print("self.terminated_counter: ", self.terminated_counter)
+            print("path switched")
 
         self.tick : int = 0
         self.linear_velocity : float = 0.0
@@ -80,18 +85,19 @@ class SimplePathFollowingEnv(gym.Env):
         return observation
         # return observation, info
 
-    def step(self, action, dt : float=0.5):
+    def step(self, action, dt : float=1.0):
         '''
         Step the environment with the given action.
         '''
+        terminated = False
+
         self.linear_velocity, self.angular_velocity = action
         self.angular_velocity = self.angular_velocity * dt 
 
         self._is_goal_reached()
-        # calculate lateral error
         terminated = self._is_success()
 
-        if self.terminated_counter:
+        if terminated:
             self.terminated_counter += 1
 
         truncated = self._is_truncated()
@@ -189,10 +195,6 @@ class SimplePathFollowingEnv(gym.Env):
         reward_minor_goal_reached = 0.0
         sucess_reward = 0.0
 
-        k_d = 1.0
-
-        # reward_lateral_error
-
         if self.is_goal_reached:
             reward_goal_reached = 10.0
         if self.is_minor_goal_reached:
@@ -217,7 +219,6 @@ class SimplePathFollowingEnv(gym.Env):
         if self._goal_distance() < self.goal_threshold:
             self.current_goal_index += self.goal_step
             self.goal_reached_counter += 1
-            print("self.goal_reached_counter: ", self.goal_reached_counter)
             if self.current_goal_index < len(self.path):
                 self.current_goal_position = self.path[self.current_goal_index]
             else:
@@ -233,14 +234,11 @@ class SimplePathFollowingEnv(gym.Env):
         '''
         Update the minor goal for the agent.
         '''
-        # print("self.current_goals_window_position: ", self.current_goals_window_position)
-        # Calculate distances between current position and all goals in window
         distances = np.array([self._get_distance(self.current_position, goal) 
                          for goal in self.current_goals_window_position])
         
         if np.any(distances < 0.2):
             self.minor_goal_reacher_counter += 1
-            print("self.minor_goal_reacher_counter: ", self.minor_goal_reacher_counter)
             closest_goal_index = np.argmin(distances)
             self.current_goal_index = closest_goal_index + self.current_goal_index + 1
             self.current_goal_position = self.path[self.current_goal_index]
@@ -255,7 +253,6 @@ class SimplePathFollowingEnv(gym.Env):
         Check if the agent is in the goal.
         '''
         if self._get_distance(self.current_position, self.path[-1]) < self.goal_threshold:
-            print("Final goal reached")
             return True
         return False
     
@@ -272,28 +269,37 @@ class SimplePathFollowingEnv(gym.Env):
         self.timeout = self.tick > 1000
         self.out_of_bound = self._goal_distance() > self.out_of_bound_threshold
 
-        if not self._is_success() and self.current_goal_position[1] > self.path[-1][1]:
+        if not self._is_success() and self.current_position[0] > self.path[-1][0]:
+            print("aqui")
             self.out_of_bound = True 
 
         return (self.timeout or self.out_of_bound)
     
-    def _create_path(self):
+    def _switch_path(self):
+        print("path switched")
+        path_type = np.random.choice(['straight', 'sine'])
+        path = self._create_path(path_type)
+        return path
+
+    def _create_path(self, path_type: str = 'straight'):
         '''
         Create path for the agent to follow.
         '''
-        return np.array([[i, 0.0] for i in range(100)])
+        if path_type == 'straight':
+            return np.array([[i, 0.0] for i in range(100)])
 
         # base_x = np.arange(100)
         # base_y = np.zeros(100)
 
         # return np.column_stack((base_x, 3 * np.sin(base_x / 3)))
 
-        # x = np.arange(100)
-    
-        # # Ajuste crítico: deslocamos a lombada para começar em x=0
-        # y = 3.0 * np.exp(-0.5 * ((x - 80) / 10)**2)  # Pico em x=30, largura 10
+        if path_type == 'sine':
+            x = np.arange(100)
         
-        # return np.column_stack((x, y))
+            # Ajuste crítico: deslocamos a lombada para começar em x=0
+            y = 3.0 * np.exp(-0.5 * ((x - 80) / 10)**2)  # Pico em x=30, largura 10
+            
+            return np.column_stack((x, y))
     
     def _get_angle_error(self):
         '''
@@ -304,6 +310,7 @@ class SimplePathFollowingEnv(gym.Env):
             self.current_goal_position[0] - self.current_position[0]
         )
         return yaw_angle_error
+    
     
     def _generate_goals_window(self):
         '''
