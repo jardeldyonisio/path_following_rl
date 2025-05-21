@@ -22,9 +22,7 @@ class DDPGAgent:
         self.tau = tau
 
         # Networks
-        # self.actor = Actor(state_dim, action_dim, max_action)
         self.actor = Actor(state_dim, action_dim, max_action).to(device)
-        # self.actor_target = Actor(state_dim, action_dim, max_action)
         self.actor_target = Actor(state_dim, action_dim, max_action).to(device)
         
         # self.critic = Critic(state_dim, action_dim)
@@ -65,30 +63,30 @@ class DDPGAgent:
         '''
 
         # Get a batch of experiences
-        states, actions, rewards, next_states, _ = self.memory.sample(batch_size)
+        # states, actions, rewards, next_states, _ = self.memory.sample(batch_size)
+        observations, actions, rewards, next_observations, terminateds, truncateds, infos = self.memory.sample(batch_size)
 
         # Convert the experiences to PyTorch tensors
         # for training with the networks
-        # states = torch.FloatTensor(np.array(states))
-        # actions = torch.FloatTensor(np.array(actions))
-        # rewards = torch.FloatTensor(np.array(rewards))
-        # next_states = torch.FloatTensor(np.array(next_states))
-        states = torch.FloatTensor(states).to(device)
-        # states = torch.FloatTensor(states).to(device)
+        observations = torch.FloatTensor(observations).to(device)
         actions = torch.FloatTensor(actions).to(device)
         rewards = torch.FloatTensor(rewards).to(device)
-        next_states = torch.FloatTensor(next_states).to(device)
+        next_observations = torch.FloatTensor(next_observations).to(device)
+        # terminateds = torch.FloatTensor(terminateds).to(device)
+        # truncateds = torch.FloatTensor(truncateds).to(device)
+        # infos = torch.FloatTensor(infos).to(device)
+        dones = torch.FloatTensor(np.logical_or(terminateds, truncateds)).unsqueeze(1).to(device)
 
         # Critic loss
-        Qvals = self.critic.forward(states, actions)
-        next_actions = self.actor_target.forward(next_states)
-        next_Q = self.critic_target.forward(next_states, next_actions.detach())
-        Qprime = rewards + self.gamma * next_Q
-        # Qprime = rewards + (1 - dones) * self.gamma * next_Q
+        Qvals = self.critic.forward(observations, actions)
+        next_actions = self.actor_target.forward(next_observations)
+        next_Q = self.critic_target.forward(next_observations, next_actions.detach())
+        # Qprime = rewards + self.gamma * next_Q
+        Qprime = rewards + (1 - dones) * self.gamma * next_Q
         critic_loss = self.critic_criterion(Qvals, Qprime)
         
         # Actor loss
-        policy_loss = -self.critic.forward(states, self.actor.forward(states)).mean()
+        policy_loss = -self.critic.forward(observations, self.actor.forward(observations)).mean()
         
         # Update networks
         self.actor_optimizer.zero_grad()
@@ -106,22 +104,43 @@ class DDPGAgent:
         for target_param, param in zip(self.critic_target.parameters(), self.critic.parameters()):
             target_param.data.copy_(param.data * self.tau + target_param.data * (1.0 - self.tau))
 
+    # def save_model(self, filename="ddpg_model.pth"):
+    #     '''
+    #     Saves the model's weights to a file.
+    #     '''
+    #     torch.save({
+    #         'actor': self.actor.state_dict(),
+    #         'critic': self.critic.state_dict(),
+    #     }, filename)
+    #     print(f"Model saved to {filename}")
+
+    # def load_model(self, filename="ddpg_model.pth"):
+    #     '''
+    #     Loads the model's weights from a file.
+    #     '''
+    #     checkpoint = torch.load(filename, map_location=torch.device('cpu'))
+    #     self.actor.load_state_dict(checkpoint['actor'])
+    #     self.critic.load_state_dict(checkpoint['critic'])
+    #     self.actor.eval()
+    #     print(f"Model loaded from {filename}")
+
     def save_model(self, filename="ddpg_model.pth"):
-        '''
-        Saves the model's weights to a file.
-        '''
         torch.save({
             'actor': self.actor.state_dict(),
             'critic': self.critic.state_dict(),
+            'actor_target': self.actor_target.state_dict(),
+            'critic_target': self.critic_target.state_dict(),
+            'actor_optimizer': self.actor_optimizer.state_dict(),
+            'critic_optimizer': self.critic_optimizer.state_dict(),
         }, filename)
         print(f"Model saved to {filename}")
 
     def load_model(self, filename="ddpg_model.pth"):
-        '''
-        Loads the model's weights from a file.
-        '''
-        checkpoint = torch.load(filename, map_location=torch.device('cpu'))
+        checkpoint = torch.load(filename, map_location=device)
         self.actor.load_state_dict(checkpoint['actor'])
         self.critic.load_state_dict(checkpoint['critic'])
-        self.actor.eval()
+        self.actor_target.load_state_dict(checkpoint['actor_target'])
+        self.critic_target.load_state_dict(checkpoint['critic_target'])
+        self.actor_optimizer.load_state_dict(checkpoint['actor_optimizer'])
+        self.critic_optimizer.load_state_dict(checkpoint['critic_optimizer'])
         print(f"Model loaded from {filename}")
