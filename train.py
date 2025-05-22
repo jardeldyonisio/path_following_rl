@@ -17,7 +17,7 @@ noise = OUNoise(env.action_space)
 batch_size = 128
 max_episodes = 10000
 max_steps = 1000
-seed_steps = 1000
+seed_steps = 10000
 
 step = 0
 
@@ -31,15 +31,32 @@ for episode in range(max_episodes):
     episode_reward = 0
     # noise.reset()
 
-    for step in range(max_steps):
-        action = agent.get_action(observation)
-        action = noise.get_action_from_raw_action(action, max_steps)
-        next_observation, reward, terminated, truncated, info = env.step(action)
+    for _ in range(max_steps):
+        # Collect experience
+        if step > seed_steps:
+            action = agent.get_action(observation)
+            action = noise.get_action_from_raw_action(action, max_steps)
+        else:
+            # Takes random action before training
+            print("Random action before training")
+            action = env.rand_action()
 
+        next_observation, reward, terminated, truncated, info = env.step(action)
         agent.memory.add(observation, action, reward, next_observation, terminated, truncated, info)
 
-        if len(agent.memory) > batch_size:
+        # if step >= seed_steps:
+        #     if step == seed_steps:
+        #         num_updates = seed_steps
+        #     else:
+        #         num_updates += 1
+        #     for _ in range(num_updates):
+        #         agent.update(batch_size)
+
+        if step >= seed_steps:
+            # Update the agent
             agent.update(batch_size)
+
+        step += 1
 
         observation = next_observation
         episode_reward += reward

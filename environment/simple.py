@@ -166,6 +166,12 @@ class SimplePathFollowingEnv(gym.Env):
         Close the environment.
         '''
         pass
+
+    def rand_action(self):
+        '''
+        Generate a random action.
+        '''
+        return np.random.uniform(self.action_space.low, self.action_space.high)
     
     def _get_info(self):
         # How many goals reached
