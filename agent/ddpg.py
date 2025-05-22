@@ -14,7 +14,7 @@ This class implements a DDPG agent.
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class DDPGAgent:
-    def __init__(self, state_dim, action_dim, max_action, gamma=0.99, tau=0.005, buffer_size=100000, 
+    def __init__(self, observation_dim, action_dim, max_action, gamma=0.99, tau=0.005, buffer_size=100000, 
                  actor_learning_rate=1e-4, critic_learning_rate=1e-3):
         
         # Parameters
@@ -22,13 +22,11 @@ class DDPGAgent:
         self.tau = tau
 
         # Networks
-        self.actor = Actor(state_dim, action_dim, max_action).to(device)
-        self.actor_target = Actor(state_dim, action_dim, max_action).to(device)
+        self.actor = Actor(observation_dim, action_dim, max_action).to(device)
+        self.actor_target = Actor(observation_dim, action_dim, max_action).to(device)
         
-        # self.critic = Critic(state_dim, action_dim)
-        self.critic = Critic(state_dim, action_dim).to(device)
-        # self.critic_target = Critic(state_dim, action_dim)
-        self.critic_target = Critic(state_dim, action_dim).to(device)
+        self.critic = Critic(observation_dim, action_dim).to(device)
+        self.critic_target = Critic(observation_dim, action_dim).to(device)
         
         for target_param, param in zip(self.actor_target.parameters(), self.actor.parameters()):
             target_param.data.copy_(param.data)
@@ -42,17 +40,10 @@ class DDPGAgent:
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr = actor_learning_rate)
         self.critic_optimizer = optim.Adam(self.critic.parameters(), lr = critic_learning_rate)
 
-    def get_action(self, state):
-        # state = torch.FloatTensor(state).unsqueeze(0)
-        state = torch.FloatTensor(state).unsqueeze(0).to(device)
-        # action = self.actor.forward(state).detach().numpy()[0]
-        action = self.actor.forward(state).detach().cpu().numpy()[0]
-
-        # linear action
-        action[0] = np.clip(action[0], 0.01, 1.0)
-
-        # angular action
-        action[1] = np.clip(action[1], -1.0, 1.0)
+    def get_action(self, observation):
+        observation = torch.FloatTensor(observation).unsqueeze(0).to(device)
+        # action = self.actor.forward(observation).detach().numpy()[0]
+        action = self.actor.forward(observation).detach().cpu().numpy()[0]
 
         return action
     
@@ -60,10 +51,11 @@ class DDPGAgent:
 
         '''
         This function is responsible for updating the networks.
+
+        @param batch_size: The number of samples to be used in each update.
         '''
 
         # Get a batch of experiences
-        # states, actions, rewards, next_states, _ = self.memory.sample(batch_size)
         observations, actions, rewards, next_observations, terminateds, truncateds, infos = self.memory.sample(batch_size)
 
         # Convert the experiences to PyTorch tensors
@@ -103,26 +95,6 @@ class DDPGAgent:
         
         for target_param, param in zip(self.critic_target.parameters(), self.critic.parameters()):
             target_param.data.copy_(param.data * self.tau + target_param.data * (1.0 - self.tau))
-
-    # def save_model(self, filename="ddpg_model.pth"):
-    #     '''
-    #     Saves the model's weights to a file.
-    #     '''
-    #     torch.save({
-    #         'actor': self.actor.state_dict(),
-    #         'critic': self.critic.state_dict(),
-    #     }, filename)
-    #     print(f"Model saved to {filename}")
-
-    # def load_model(self, filename="ddpg_model.pth"):
-    #     '''
-    #     Loads the model's weights from a file.
-    #     '''
-    #     checkpoint = torch.load(filename, map_location=torch.device('cpu'))
-    #     self.actor.load_state_dict(checkpoint['actor'])
-    #     self.critic.load_state_dict(checkpoint['critic'])
-    #     self.actor.eval()
-    #     print(f"Model loaded from {filename}")
 
     def save_model(self, filename="ddpg_model.pth"):
         torch.save({

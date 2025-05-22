@@ -4,37 +4,42 @@ import matplotlib.pyplot as plt
 
 from environment.simple import SimplePathFollowingEnv
 from agent.ddpg import DDPGAgent
-from utils.utils import OUNoise, ReplayBuffer
+from utils.utils import OUNoise
 
 '''
 This code it's the main file to run the environment.
 '''
 
 env = SimplePathFollowingEnv()
-agent = DDPGAgent(state_dim=4, action_dim=2, max_action=1.0)
+agent = DDPGAgent(observation_dim=4, action_dim=2, max_action=1.0)
 noise = OUNoise(env.action_space)
-buffer_size = 128
+
+batch_size = 128
+max_episodes = 10000
+max_steps = 1000
+seed_steps = 1000
+
+step = 0
+
 rewards = []
 avg_rewards = []
-episodes = 10000
-step = 1000
 
-memory = ReplayBuffer(buffer_size)
-
-for episode in range(episodes):
+for episode in range(max_episodes):
     # Get the initial state
     observation = env.reset()
     # print("observation: ", observation)
     episode_reward = 0
+    # noise.reset()
 
-    for step in range(1000):
+    for step in range(max_steps):
         action = agent.get_action(observation)
-        # print("action: ", action)
-        action = noise.get_action_from_raw_action(action, step)
-        # print("action noise: ", action)
+        action = noise.get_action_from_raw_action(action, max_steps)
         next_observation, reward, terminated, truncated, info = env.step(action)
 
-        memory.add(observation, action, reward, next_observation, terminated, truncated, info)
+        agent.memory.add(observation, action, reward, next_observation, terminated, truncated, info)
+
+        if len(agent.memory) > batch_size:
+            agent.update(batch_size)
 
         observation = next_observation
         episode_reward += reward
@@ -44,7 +49,6 @@ for episode in range(episodes):
             break
         env.render()
     rewards.append(episode_reward)
-    # avg_rewards.append(np.mean(reward[-10:]))
 
 agent.save_model("models/ddpg_model.pth")
 
