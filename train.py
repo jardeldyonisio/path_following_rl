@@ -14,10 +14,10 @@ env = SimplePathFollowingEnv()
 agent = DDPGAgent(observation_dim=4, action_dim=2, max_action=1.0)
 noise = OUNoise(env.action_space)
 
-batch_size = 128
-max_episodes = 10000
+batch_size = 1
+max_episodes = 100000
 max_steps = 1000
-seed_steps = 10000
+seed_steps = 1000
 
 step = 0
 
@@ -27,9 +27,7 @@ avg_rewards = []
 for episode in range(max_episodes):
     # Get the initial state
     observation = env.reset()
-    # print("observation: ", observation)
     episode_reward = 0
-    # noise.reset()
 
     for _ in range(max_steps):
         # Collect experience
@@ -44,17 +42,13 @@ for episode in range(max_episodes):
         next_observation, reward, terminated, truncated, info = env.step(action)
         agent.memory.add(observation, action, reward, next_observation, terminated, truncated, info)
 
-        # if step >= seed_steps:
-        #     if step == seed_steps:
-        #         num_updates = seed_steps
-        #     else:
-        #         num_updates += 1
-        #     for _ in range(num_updates):
-        #         agent.update(batch_size)
-
         if step >= seed_steps:
-            # Update the agent
-            agent.update(batch_size)
+            if step == seed_steps:
+                num_updates = seed_steps
+            else:
+                num_updates = 1
+            for _ in range(num_updates):
+                agent.update(batch_size)
 
         step += 1
 

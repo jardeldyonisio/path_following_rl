@@ -6,7 +6,7 @@ from environment.simple import SimplePathFollowingEnv
 class ManualControl:
     def __init__(self, env):
         self.env = env
-        self.current_action = np.array([0.0, 0.0])  # [linear_velocity, angular_velocity]
+        self.current_action = np.array([0.00, 0.0])  # [linear_velocity, angular_velocity]
         self.action_map = {
             keyboard.Key.up: [0.1, 0.0],     # Acelera para frente
             keyboard.Key.down: [-0.1, 0.0],  # Ré

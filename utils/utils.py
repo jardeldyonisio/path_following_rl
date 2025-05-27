@@ -18,7 +18,7 @@ class OUNoise(RawExplorationStrategy):
                  action_space, 
                  mu=0.0, 
                  theta=0.15, 
-                 max_sigma=0.05, 
+                 max_sigma=0.3, # 0.3 
                  min_sigma=None, 
                  decay_period=100000):
         '''
