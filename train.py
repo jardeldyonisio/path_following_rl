@@ -4,8 +4,8 @@ import matplotlib.pyplot as plt
 
 from environment.simple import SimplePathFollowingEnv
 from agent.ddpg import DDPGAgent
-from utils.utils import OUNoise
 from torch.utils.tensorboard import SummaryWriter
+from utils.utils import DrQv2Noise
 
 '''
 This code it's the main file to run the environment.
@@ -13,61 +13,9 @@ This code it's the main file to run the environment.
 
 writer = SummaryWriter('runs/ddpg_path_following')
 
-# env = SimplePathFollowingEnv()
-# agent = DDPGAgent(observation_dim=4, action_dim=2, max_action=1.0)
-# noise = OUNoise(env.action_space)
-
-# batch_size = 128
-# max_episodes = 100000
-# max_steps = 1000
-# seed_steps = 5000
-
-# step = 0
-
-# rewards = []
-# avg_rewards = []
-
-# for episode in range(max_episodes):
-#     # Get the initial state
-#     observation = env.reset()
-#     episode_reward = 0
-#     episode_steps = 0
-
-#     for _ in range(max_steps):
-#         # Collect experience
-#         if step > seed_steps:
-#             action = agent.get_action(observation)
-#             action = noise.get_action_from_raw_action(action, max_steps)
-
-### DrQ-v2 Style Noise Scheduler ###
-class DrQv2Noise:
-    """
-    A noise scheduler that linearly anneals the standard deviation of Gaussian noise.
-    This is a common practice in modern DRL algorithms like DrQ-v2.
-    """
-    def __init__(self, action_dim, initial_noise=1.0, final_noise=0.1, anneal_steps=500000):
-        self.action_dim = action_dim
-        self.initial_noise = initial_noise
-        self.final_noise = final_noise
-        self.anneal_steps = anneal_steps
-        # Calculate the linear decay slope
-        self.slope = -(self.initial_noise - self.final_noise) / self.anneal_steps
-
-    def get_stddev(self, step):
-        """Calculates the current standard deviation based on the training step."""
-        if step >= self.anneal_steps:
-            return self.final_noise
-        return self.initial_noise + self.slope * step
-
-    def sample(self, step):
-        """Samples noise from a Gaussian distribution with the current stddev."""
-        stddev = self.get_stddev(step)
-        return np.random.normal(0, stddev, size=self.action_dim).astype(np.float32)
-
 env = SimplePathFollowingEnv()
-agent = DDPGAgent(observation_dim=4, action_dim=2, max_action=1.0)
-# noise = OUNoise(env.action_space)
-
+obs_dim = 4 + env.num_goals_window
+agent = DDPGAgent(observation_dim=obs_dim, action_dim=2, max_action=1.0)
 noise = DrQv2Noise(action_dim=env.action_space.shape[0])
 
 batch_size = 256
