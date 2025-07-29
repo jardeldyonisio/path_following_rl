@@ -46,15 +46,15 @@ class SimplePathFollowingEnv(gym.Env):
         # State: [distance_to_goal, linear_vel, angular_vel, yaw_error]
         self.observation_space = gym.spaces.Box(
             low=np.array([self.min_goal_distance, 
-                          self.min_linear_velocity, 
-                          self.min_angular_velocity, 
+                          -1.0, 
+                          -1.0, 
                           self.min_yaw_error
-                          ]),
+                          ] + [self.min_goal_distance] * self.num_goals_window),
             high=np.array([self.max_goal_distance, 
-                           self.max_linear_velocity, 
-                           self.max_angular_velocity, 
+                           1.0, 
+                           1.0, 
                            self.max_yaw_error
-                           ]),
+                           ] + [self.max_goal_distance] * self.num_goals_window),
             dtype=np.float32
         )
 
@@ -68,11 +68,6 @@ class SimplePathFollowingEnv(gym.Env):
         Reset the environment to the initial state.
         '''
         super().reset(seed=seed)
-        # if self.terminated_counter % 5 == 0:
-        #     self.path = self._switch_path()
-        #     self.terminated_counter += 1
-        #     print("self.terminated_counter: ", self.terminated_counter)
-        #     print("The path was switched.")
 
         self.path = self._switch_path()
 
@@ -113,13 +108,6 @@ class SimplePathFollowingEnv(gym.Env):
         self.linear_velocity = self.min_linear_velocity + (self.max_linear_velocity - self.min_linear_velocity) * ((self.current_action[0] + 1) / 2)
         self.angular_velocity = self.min_angular_velocity + (self.max_angular_velocity - self.min_angular_velocity) * ((self.current_action[1] + 1) / 2)
 
-        # Check distance calculation
-        # Check agent position calculation
-        # Check yaw error and desired yaw angle calculation
-        # --------
-        # Implement something close to TD3 twin
-
-        # Current position
         self._update_agent_position()
         self._get_angle_error()
         self._is_goal_reached()
@@ -203,9 +191,9 @@ class SimplePathFollowingEnv(gym.Env):
         Generate a random action.
         '''
         return np.array([
-            np.random.uniform(self.min_linear_velocity, self.max_linear_velocity),
-            np.random.uniform(self.min_angular_velocity, self.max_angular_velocity)
-        ])
+            np.random.uniform(-1.0, 1.0),
+            np.random.uniform(-1.0, 1.0)
+        ], dtype=np.float32)
 
     def _get_info(self) -> None:
         '''
@@ -217,13 +205,7 @@ class SimplePathFollowingEnv(gym.Env):
         '''
         Update the agent position based on the current state.
         '''
-        # dx = self.linear_velocity * np.cos(self.angular_velocity)
-        # dy = self.linear_velocity * np.sin(self.angular_velocity)
-        # self.current_position += np.array([dx, dy])
-        # self.agent_yaw = self.angular_velocity
-
         self.agent_yaw += self.angular_velocity * dt
-        # self.agent_yaw = self.angular_velocity
 
         dx = self.linear_velocity * np.cos(self.agent_yaw)
         dy = self.linear_velocity * np.sin(self.agent_yaw)
@@ -233,12 +215,17 @@ class SimplePathFollowingEnv(gym.Env):
         '''
         Get the current state of the environment.
         '''
-        return np.array([
+        obs = np.array([
             self.current_goal_distance,
             self.previous_action[0],
             self.previous_action[1],
-            self.desired_yaw_angle
+            self.desired_yaw_angle,
+            *self.distances
         ])
+
+        print("obs: ", obs)
+    
+        return obs
 
     def _rewards(self) -> float:
         '''
@@ -295,6 +282,11 @@ class SimplePathFollowingEnv(gym.Env):
         '''
         self.distances = np.array([self._get_distance(self.current_position, goal) 
                          for goal in self.current_goals_window_position])
+        
+        # Pad to garantee the window size
+        if len(self.distances) < self.num_goals_window:
+            self.distances = np.pad(self.distances, (0, self.num_goals_window - len(self.distances)), 
+                           'constant', constant_values=self.max_goal_distance)
 
         if np.any(self.distances < self.goal_threshold):
             self.minor_goal_reacher_counter += 1
@@ -360,24 +352,13 @@ class SimplePathFollowingEnv(gym.Env):
         '''
         Calculate the angle error between the agent and the goal.
         '''
-        # self.yaw_angle_error = np.arctan2(
-        #     self.current_goal_position[1] - self.current_position[1],
-        #     self.current_goal_position[0] - self.current_position[0]
-        # )
-
-        # self.desired_yaw_angle = self.yaw_angle_error - self.agent_yaw
-
         angle_to_goal = np.arctan2(
             self.current_goal_position[1] - self.current_position[1],
             self.current_goal_position[0] - self.current_position[0]
         )
 
         self.desired_yaw_angle = angle_to_goal - self.agent_yaw
-        # print("self.desired_yaw_angle: ", self.desired_yaw_angle)
         self.desired_yaw_angle = (self.desired_yaw_angle + np.pi) % (2 * np.pi) - np.pi
-        # print("self.desired_yaw_angle_pos: ", self.desired_yaw_angle)
-        # self.desired_yaw_angle = np.arctan2(np.sin(self.yaw_angle_error), np.cos(self.yaw_angle_error))
-        # print("self.desired_yaw_angle: ", self.desired_yaw_angle)
     
     def _generate_goals_window(self) -> None:
         '''
