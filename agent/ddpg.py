@@ -13,9 +13,21 @@ This class implements a DDPG agent.
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class DDPGAgent:
-    def __init__(self, observation_dim, action_dim, max_action, gamma=0.99, tau=0.005, buffer_size=1000000, 
-                 actor_learning_rate=1e-4, critic_learning_rate=1e-3):
+    def __init__(self, 
+                 observation_dim, 
+                 action_dim, 
+                 max_action, 
+                 gamma=0.99, 
+                 tau=0.005, 
+                 buffer_size=1000000, 
+                 actor_learning_rate=1e-4, 
+                 critic_learning_rate=1e-3, 
+                 seed=None):
         
+        if seed is not None:
+            torch.manual_seed(seed)
+            np.random.seed(seed)
+
         # Parameters
         self.gamma = gamma
         self.tau = tau

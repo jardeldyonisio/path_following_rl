@@ -69,6 +69,9 @@ class SimplePathFollowingEnv(gym.Env):
         '''
         super().reset(seed=seed)
 
+        if seed is not None:
+            np.random.seed(seed)
+
         self.path = self._switch_path()
 
         self.agent_yaw : float = 0.0
@@ -82,9 +85,9 @@ class SimplePathFollowingEnv(gym.Env):
         self.current_goal_position : float = self.path[0]
         self.current_position : np.ndarray = np.array([-0.3, 0.0])
         self.current_goals_window_position = self.path[1:self.goal_step * self.num_goals_window: self.goal_step]
-        self.is_minor_goal_reached: bool = False
+        self.is_subgoal_reached: bool = False
         self.goal_reached_counter: int = 0
-        self.minor_goal_reacher_counter: int = 0
+        self.subgoal_reacher_counter: int = 0
         self.is_goal_reached: bool = False
         self.is_terminated: bool = False
         self.is_truncated: bool = False
@@ -215,7 +218,7 @@ class SimplePathFollowingEnv(gym.Env):
         '''
         Get the current state of the environment.
         '''
-        obs = np.array([
+        return np.array([
             self.current_goal_distance,
             self.previous_action[0],
             self.previous_action[1],
@@ -223,16 +226,12 @@ class SimplePathFollowingEnv(gym.Env):
             *self.distances
         ])
 
-        print("obs: ", obs)
-    
-        return obs
-
     def _rewards(self) -> float:
         '''
         Calculate the reward based on the current state.
         '''
         reward_goal_reached = 0.0
-        reward_minor_goal_reached = 0.0
+        reward_subgoal_reached = 0.0
         sucess_reward = 0.0
         reward_distance = 0.0
         truncated_reward = 0.0
@@ -241,13 +240,13 @@ class SimplePathFollowingEnv(gym.Env):
         
         if self.is_goal_reached:
             reward_goal_reached = 10.0
-        if self.is_minor_goal_reached:
-            reward_minor_goal_reached = 5.0
+        if self.is_subgoal_reached:
+            reward_subgoal_reached = 5.0
         if self.is_terminated:
             sucess_reward = 100.0
         if self.is_truncated:
             truncated_reward = -100.0
-        rewards = reward_goal_reached + sucess_reward + reward_minor_goal_reached + reward_distance + truncated_reward
+        rewards = reward_goal_reached + sucess_reward + reward_subgoal_reached + reward_distance + truncated_reward
 
         return rewards
     
@@ -273,30 +272,56 @@ class SimplePathFollowingEnv(gym.Env):
             self._generate_goals_window()
             self.is_goal_reached = True
             return
-        self._update_minor_goal()
+        self._update_subgoal()
         self.is_goal_reached = False
     
-    def _update_minor_goal(self):
+    def _update_subgoal(self):
         '''
         Update the minor goal for the agent.
         '''
-        self.distances = np.array([self._get_distance(self.current_position, goal) 
-                         for goal in self.current_goals_window_position])
-        
-        # Pad to garantee the window size
-        if len(self.distances) < self.num_goals_window:
-            self.distances = np.pad(self.distances, (0, self.num_goals_window - len(self.distances)), 
-                           'constant', constant_values=self.max_goal_distance)
+        # if np.any(self.distances < self.goal_threshold):
+        #     self.subgoal_reacher_counter += 1
+        #     closest_goal_index = np.argmin(self.distances)
+        #     self.current_goal_index = closest_goal_index + self.current_goal_index + 1
+        #     self.current_goal_position = self.path[self.current_goal_index]
+        #     self._generate_goals_window()
+        #     self.is_subgoal_reached = True
+        #     return
+        # self.is_subgoal_reached = False
 
-        if np.any(self.distances < self.goal_threshold):
-            self.minor_goal_reacher_counter += 1
-            closest_goal_index = np.argmin(self.distances)
-            self.current_goal_index = closest_goal_index + self.current_goal_index + 1
-            self.current_goal_position = self.path[self.current_goal_index]
+        # Calculate distances to available goals using correct variable names
+        available_distances = np.array([self._get_distance(self.current_position, goal) 
+                            for goal in self.current_goals_window_position])
+        
+        # Initialize distances array
+        self.distances = np.full(self.num_goals_window, 0.0)
+        
+        if len(available_distances) > 0:
+            # Fill real distances
+            self.distances[:len(available_distances)] = available_distances
+            
+            if len(available_distances) < self.num_goals_window:
+                last_distance = available_distances[-1]
+                self.distances[len(available_distances):] = last_distance
+        else:
+            self.distances.fill(self.current_goal_distance)
+
+        # Check if any minor goal is reached
+        if len(available_distances) > 0 and np.any(available_distances < self.goal_threshold):
+            closest_goal_index = np.argmin(available_distances)
+            # self.current_goal_index = closest_goal_index + self.current_goal_index + 1
+            # reached_subgoal_index = (self.current_goal_index + 1) + closest_goal_index * self.goal_step
+            # self.current_goal_index = reached_subgoal_index + self.goal_step
+            self.current_goal_index = (self.current_goal_index + 1) + (closest_goal_index + 1) * self.goal_step
+            # self.current_goal_index = (self.current_goal_index + 1) + closest_goal_index * self.goal_step # Dranaju fixed version
+            if self.current_goal_index < len(self.path):
+                self.current_goal_position = self.path[self.current_goal_index]
+            else:
+                self.current_goal_position = self.path[-1]
             self._generate_goals_window()
-            self.is_minor_goal_reached = True
+            self.is_subgoal_reached = True
             return
-        self.is_minor_goal_reached = False
+        self.is_subgoal_reached = False
     
     def _is_terminated(self):
         '''

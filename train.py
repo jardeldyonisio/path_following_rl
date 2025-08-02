@@ -1,21 +1,41 @@
 import sys
 import numpy as np
 import matplotlib.pyplot as plt
+import torch
+import random
 
 from environment.simple import SimplePathFollowingEnv
 from agent.ddpg import DDPGAgent
 from torch.utils.tensorboard import SummaryWriter
 from utils.utils import DrQv2Noise
+from datetime import datetime
 
 '''
 This code it's the main file to run the environment.
 '''
 
-writer = SummaryWriter('runs/ddpg_path_following')
+# Set fixed seed
+SEED = 42
+
+def set_seed(seed):
+    """Set seed for reproducibility"""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+set_seed(SEED)
+
+timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+log_dir = f"runs/ddpg_path_following/{timestamp}"
+writer = SummaryWriter(log_dir=log_dir)
 
 env = SimplePathFollowingEnv()
 obs_dim = 4 + env.num_goals_window
-agent = DDPGAgent(observation_dim=obs_dim, action_dim=2, max_action=1.0)
+agent = DDPGAgent(observation_dim=obs_dim, action_dim=2, max_action=1.0, seed=SEED)
 noise = DrQv2Noise(action_dim=env.action_space.shape[0])
 
 batch_size = 256
@@ -28,9 +48,11 @@ step = 0
 rewards = []
 avg_rewards = []
 
+
+
 for episode in range(max_episodes):
     # Get the initial state
-    observation = env.reset()
+    observation = env.reset(seed=SEED + episode)
     episode_reward = 0
     episode_steps = 0
 
@@ -52,10 +74,6 @@ for episode in range(max_episodes):
         agent.memory.add(observation, action, reward, next_observation, terminated, truncated, info)
 
         if step >= seed_steps:
-            # if step == seed_steps:
-            #     num_updates = seed_steps
-            # else:
-            #     num_updates = 1
             critic_loss_val, actor_loss_val = agent.update(batch_size)
             writer.add_scalar('Loss/Critic', critic_loss_val, step)
             writer.add_scalar('Loss/Actor', actor_loss_val, step)
@@ -80,7 +98,7 @@ for episode in range(max_episodes):
 
 writer.close()
 
-agent.save_model("models/ddpg_model.pth")
+agent.save_model(f"models/{timestamp}.pth")
 
 plt.plot(rewards)
 plt.plot(avg_rewards)
