@@ -2,6 +2,8 @@
 
 This repository contains code for training a reinforcement learning agent to follow a path using the DDPG algorithm. The agent is trained in a 2D environment where it learns to navigate along a predefined path. The repository was created to be easy to change the model and reward functions.
 
+![Demo](docs/demo.gif)
+
 ## Project Structure
 
 ```
@@ -54,11 +56,11 @@ python scripts/test.py
 This project includes a custom environment for path following, implemented in the `environment/simple.py` file. The environment is designed to be compatible with OpenAI Gym, allowing for easy integration with reinforcement learning libraries.
 
 The environment simulates a 2D path following task where:
-- **Agent**: Represented as a point with position (x, y) and orientation (θ)
-- **Path**: Generated with various shapes (straight lines, curves, etc.) with randomized parameters
-- **Goal Window**: Agent observes next 15 subgoals along the path
-- **Rewards**: Based on distance to path, progress along path, and goal completion
-- **Episode Termination**: When agent reaches the end of path or exceeds maximum steps (800)
+- **Agent**: Represented as a point with position (x, y) and orientation (θ).
+- **Path**: Generated with various shapes (straight lines, curves, etc.) with randomized parameters.
+- **Goal Window**: Agent observes next 15 subgoals along the path.
+- **Rewards**: Based on distance to path, progress along path, and goal completion.
+- **Episode Termination**: When agent reaches the end of path or exceeds maximum steps (800).
 
 There are defined a few paths shapes and with randomized parameters. Every time the environment is reset, a new path is generated.
 
