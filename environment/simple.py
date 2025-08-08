@@ -360,16 +360,18 @@ class SimplePathFollowingEnv(gym.Env):
         '''
         Create path for the agent to follow.
         '''
+        random_path_size = np.random.randint(50, 100)
+
         if path_type == 'straight':
-            return np.array([[i, 0.0] for i in range(100)])
+            return np.array([[i, 0.0] for i in range(random_path_size)])
 
         if path_type == 'sine':
-            x = np.arange(100)
+            x = np.arange(random_path_size)
             y = np.random.uniform(-2.5, 2.5) * np.exp(-0.5 * ((x - np.random.uniform(20, 80)) / 10)**2)
             return np.column_stack((x, y))
         
         if path_type == 'zigzag':
-            x = np.arange(100)
+            x = np.arange(random_path_size)
             y = np.sin(x / 5) * 2.5
             return np.column_stack((x, y))
     

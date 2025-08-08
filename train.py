@@ -48,8 +48,6 @@ step = 0
 rewards = []
 avg_rewards = []
 
-
-
 for episode in range(max_episodes):
     # Get the initial state
     observation = env.reset(seed=SEED + episode)
