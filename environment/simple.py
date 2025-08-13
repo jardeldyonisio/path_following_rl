@@ -363,7 +363,9 @@ class SimplePathFollowingEnv(gym.Env):
         random_path_size = np.random.randint(50, 100)
 
         if path_type == 'straight':
-            return np.array([[i, 0.0] for i in range(random_path_size)])
+            y_point = np.random.uniform(-2.5, 2.5)
+            x_start = np.random.randint(0, 20)
+            return np.array([[x_start + i, y_point] for i in range(random_path_size)])
 
         if path_type == 'sine':
             x = np.arange(random_path_size)
