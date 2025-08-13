@@ -1,18 +1,20 @@
+import os
 import sys
-import numpy as np
-import matplotlib.pyplot as plt
 import torch
 import random
+import numpy as np
+import matplotlib.pyplot as plt
 
-from environment.simple import SimplePathFollowingEnv
-from agent.ddpg import DDPGAgent
-from torch.utils.tensorboard import SummaryWriter
-from utils.utils import DrQv2Noise
 from datetime import datetime
+from agent.ddpg import DDPGAgent
+from utils.utils import DrQv2Noise
+from torch.utils.tensorboard import SummaryWriter
+from environment.simple import SimplePathFollowingEnv
 
 '''
 This code it's the main file to run the environment.
 '''
+
 
 # Set fixed seed
 SEED = 42
@@ -33,10 +35,16 @@ timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 log_dir = f"runs/ddpg_path_following/{timestamp}"
 writer = SummaryWriter(log_dir=log_dir)
 
+# Create model/timestamp directory if it doesn't exist
+if not os.path.exists(f"models/{timestamp}"):
+    os.makedirs(f"models/{timestamp}")
+
 env = SimplePathFollowingEnv()
 obs_dim = 4 + env.num_goals_window
 agent = DDPGAgent(observation_dim=obs_dim, action_dim=2, max_action=1.0, seed=SEED)
 noise = DrQv2Noise(action_dim=env.action_space.shape[0])
+
+last_best_avg_reward = -float('inf')
 
 batch_size = 256
 max_episodes = 100000
@@ -93,6 +101,12 @@ for episode in range(max_episodes):
     writer.add_scalar('Reward/Total_reward', episode_steps, episode)
 
     sys.stdout.write("episode: {}, reward: {}, average_reward {} \n".format(episode, np.round(episode_reward, decimals=2), np.mean(rewards[-10:])))
+
+    # Save model when a new best average reward is achieved
+    if avg_reward_last_10 >= last_best_avg_reward:
+        last_best_avg_reward = avg_reward_last_10
+        print(f"New best average reward, saving model...")
+        agent.save_model(f"models/{timestamp}/best_avg_model.pth")
 
 writer.close()
 
