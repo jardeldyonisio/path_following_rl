@@ -33,6 +33,8 @@ class SimplePathFollowingEnv(gym.Env):
         self.agent_radius: float = 0.105 # Based on turtlebot3
         self.agent_footprint_radius: float = self.agent_radius * 1.2
 
+        self.inflation_radius: float = 0.2
+
         self.min_goal_distance: float = 0.0
         self.max_goal_distance: float = self.out_of_bound_threshold
 
@@ -54,11 +56,14 @@ class SimplePathFollowingEnv(gym.Env):
                           -1.0, 
                           self.min_yaw_error
                           ] + [self.min_goal_distance] * self.num_goals_window),
+                           # Add obstacle position and size
+
             high=np.array([self.max_goal_distance, 
                            1.0, 
                            1.0, 
                            self.max_yaw_error
                            ] + [self.max_goal_distance] * self.num_goals_window),
+                           # Add obstacle position and size
             dtype=np.float32
         )
 
@@ -169,8 +174,19 @@ class SimplePathFollowingEnv(gym.Env):
                                     alpha=0.7,
                                     label='Obstacle')
             self.ax.add_patch(self.obstacle_marker)
+
+            # Obstacle costmap (inflation area)
+            self.obstacle_costmap = Circle((0, 0),
+                                     0,  # Initial radius 0, will be updated
+                                     fill=False,
+                                     color='red',
+                                     linestyle=':',
+                                     linewidth=2,
+                                     alpha=0.5,
+                                     label='Obstacle Costmap')
+            self.ax.add_patch(self.obstacle_costmap)
             
-            self.agent_footprint_marker = Circle((0, 0), 
+            self.agent_footprint_marker = Circle((0, 0),
                                            self.agent_footprint_radius, 
                                            fill=False,
                                            color='gray',
@@ -181,7 +197,7 @@ class SimplePathFollowingEnv(gym.Env):
 
             self.distance_title = self.ax.set_title('Distance to Goal: 0.00m | Current tick: 0')
 
-            self.ax.set_xlim(-5, 100)
+            self.ax.set_xlim(-5, 45)
             self.ax.set_ylim(-8, 8)
             self.ax.set_aspect('equal')
             self.ax.legend()
@@ -212,16 +228,25 @@ class SimplePathFollowingEnv(gym.Env):
             multi_goals_x, multi_goals_y = zip(*self.current_goals_window_position)
             self.current_goals_window_marker.set_data(multi_goals_x, multi_goals_y)
  
-        # Update obstacle in world space
+        # Update obstacle and costmap in world space
         if hasattr(self, 'obstacle') and self.obstacle is not None:
             obstacle_x, obstacle_y = self.obstacle['position']
             obstacle_size = self.obstacle['size']
-            # Update obstacle circle position and size in world space
+            obstacle_radius = obstacle_size / 2
+            
+            # Update core obstacle
             self.obstacle_marker.set_center((obstacle_x, obstacle_y))
-            self.obstacle_marker.set_radius(obstacle_size / 2)  # Assuming size is diameter
+            self.obstacle_marker.set_radius(obstacle_radius)
             self.obstacle_marker.set_visible(True)
+            
+            # Update costmap (core + inflation radius)
+            costmap_radius = obstacle_radius + self.inflation_radius
+            self.obstacle_costmap.set_center((obstacle_x, obstacle_y))
+            self.obstacle_costmap.set_radius(costmap_radius)
+            self.obstacle_costmap.set_visible(True)
         else:
             self.obstacle_marker.set_visible(False)
+            self.obstacle_costmap.set_visible(False)
 
         self.agent_footprint_marker.set_center((agent_x, agent_y))
 
@@ -411,7 +436,7 @@ class SimplePathFollowingEnv(gym.Env):
         '''
         Create path for the agent to follow.
         '''
-        random_path_size = np.random.randint(50, 100)
+        random_path_size = np.random.randint(0, 40)
 
         if path_type == 'straight':
             y_point = np.random.uniform(-2.5, 2.5)
@@ -462,58 +487,27 @@ class SimplePathFollowingEnv(gym.Env):
             'position': obstacle_position,
             'size': obstacle_size
         }
-
-    def _get_agent_boundary(self) -> np.ndarray:
-        '''
-        Get the boundary of the agent as a circle.
-        '''
-        num_points = 16  # Number of points to approximate the circle
-        angles = np.linspace(0, 2 * np.pi, num_points, endpoint=False)
-        
-        # Generate circle points around the agent's center position
-        circle_points = []
-        for angle in angles:
-            x = self.current_position[0] + self.agent_radius * np.cos(angle)
-            y = self.current_position[1] + self.agent_radius * np.sin(angle)
-            circle_points.append([x, y])
-        
-        return np.array(circle_points)
-    
-    def _get_obstacle_boundary(self) -> np.ndarray:
-        '''
-        Get the boundary of the obstacle.
-        '''
-        if self.obstacle is None:
-            return None
-        
-        obstacle_x, obstacle_y = self.obstacle['position']
-        obstacle_size = self.obstacle['size']
-        obstacle_radius = obstacle_size
-
-        return np.array([
-            [obstacle_x - obstacle_radius, obstacle_y - obstacle_radius],
-            [obstacle_x + obstacle_radius, obstacle_y - obstacle_radius],
-            [obstacle_x + obstacle_radius, obstacle_y + obstacle_radius],
-            [obstacle_x - obstacle_radius, obstacle_y + obstacle_radius]
-        ])
     
     def _check_obstacle_collision(self) -> None:
         '''
-        Check if the agent collides with the obstacle.
+        Check if the agent collides with the obstacle using simple distance calculation.
         '''
-        agent_boundary = self._get_agent_boundary()
-        obstacle_boundary = self._get_obstacle_boundary()
-
-        if obstacle_boundary is None:
+        if self.obstacle is None:
+            self.obstacle_collision = False
             return
         
-        # Check if any point of the agent's boundary is inside the obstacle's boundary
-        for point in agent_boundary:
-            if (obstacle_boundary[0][0] <= point[0] <= obstacle_boundary[1][0] and
-                obstacle_boundary[0][1] <= point[1] <= obstacle_boundary[2][1]):
-                self.obstacle_collision = True
-                return
+        # Get positions
+        agent_pos = self.current_position
+        obstacle_pos = np.array(self.obstacle['position'])
         
-        self.obstacle_collision = False
+        # Calculate distance between centers
+        distance = self._get_distance(agent_pos, obstacle_pos)
+        
+        # Calculate collision threshold (sum of radii)
+        obstacle_radius = self.obstacle['size'] / 2  # Assuming size is diameter
+        collision_threshold = self.agent_footprint_radius + obstacle_radius
+        
+        # Check collision
+        self.obstacle_collision = distance < collision_threshold
 
         
