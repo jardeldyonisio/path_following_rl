@@ -161,7 +161,14 @@ class SimplePathFollowingEnv(gym.Env):
             self.current_goals_window_marker, = self.ax.plot([], [], marker='x', color='magenta', label='Goals Window')
             self.agent_front, = self.ax.plot([], [], linestyle='-', color='red', label='Agent Nose')
             self.desired_yaw, = self.ax.plot([], [], linestyle='--', color='orange', label='Desired Yaw')
-            self.obstacle_marker, = self.ax.plot([], [], marker='s', color='red', label='Obstacle')
+            
+            self.obstacle_marker = Circle((0, 0), 
+                                    0,  # Initial radius 0, will be updated
+                                    fill=True,
+                                    color='red',
+                                    alpha=0.7,
+                                    label='Obstacle')
+            self.ax.add_patch(self.obstacle_marker)
             
             self.agent_footprint_marker = Circle((0, 0), 
                                            self.agent_footprint_radius, 
@@ -205,11 +212,16 @@ class SimplePathFollowingEnv(gym.Env):
             multi_goals_x, multi_goals_y = zip(*self.current_goals_window_position)
             self.current_goals_window_marker.set_data(multi_goals_x, multi_goals_y)
  
+        # Update obstacle in world space
         if hasattr(self, 'obstacle') and self.obstacle is not None:
             obstacle_x, obstacle_y = self.obstacle['position']
             obstacle_size = self.obstacle['size']
-            self.obstacle_marker.set_data([obstacle_x], [obstacle_y])
-            # self.obstacle_marker.set_markersize(obstacle_size)
+            # Update obstacle circle position and size in world space
+            self.obstacle_marker.set_center((obstacle_x, obstacle_y))
+            self.obstacle_marker.set_radius(obstacle_size / 2)  # Assuming size is diameter
+            self.obstacle_marker.set_visible(True)
+        else:
+            self.obstacle_marker.set_visible(False)
 
         self.agent_footprint_marker.set_center((agent_x, agent_y))
 
@@ -443,7 +455,7 @@ class SimplePathFollowingEnv(gym.Env):
         # Get a random position on the path for the obstacle
         obstacle_index = np.random.randint(0, len(self.path) - 1)
         obstacle_position = self.path[obstacle_index]
-        obstacle_size = np.random.uniform(2.0, 8.0)
+        obstacle_size = np.random.uniform(0.1, 1.0)
 
         # Create an obstacle at the position
         self.obstacle = {
