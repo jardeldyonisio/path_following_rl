@@ -4,6 +4,7 @@
 import numpy as np
 import gymnasium as gym
 import matplotlib.pyplot as plt
+from matplotlib.patches import Circle
 
 from typing import Optional 
 
@@ -28,6 +29,9 @@ class SimplePathFollowingEnv(gym.Env):
 
         self.min_angular_velocity: float = -0.5
         self.max_angular_velocity: float = 0.5
+
+        self.agent_radius: float = 0.105 # Based on turtlebot3
+        self.agent_footprint_radius: float = self.agent_radius * 1.5
 
         self.min_goal_distance: float = 0.0
         self.max_goal_distance: float = self.out_of_bound_threshold
@@ -73,6 +77,7 @@ class SimplePathFollowingEnv(gym.Env):
             np.random.seed(seed)
 
         self.path = self._switch_path()
+        self._generate_obstacle()
 
         self.agent_yaw : float = 0.0
         self.desired_yaw_angle: float = 0.0
@@ -92,6 +97,7 @@ class SimplePathFollowingEnv(gym.Env):
         self.is_terminated: bool = False
         self.is_truncated: bool = False
         self.distances = np.zeros(self.num_goals_window)
+        self.obstacle_collision: bool = False
 
         observation = self._get_obs()
         info = self._get_info()
@@ -139,17 +145,31 @@ class SimplePathFollowingEnv(gym.Env):
             self.fig, self.ax = plt.subplots()
 
             # Create markers
-            self.path_marker, = self.ax.plot([], [], linestyle='-', color='blue', label='Path')
-            self.agent_marker, = self.ax.plot([], [], marker='o', color='black', label='Agent')
+            self.path_marker, = self.ax.plot([], 
+                                             [], 
+                                             linestyle='-', 
+                                             color='blue', 
+                                             label='Path')
+            # self.agent_marker, = self.ax.plot([], [], marker='o', color='black', label='Agent')
+            self.agent_marker = Circle((0, 0), 
+                                       self.agent_radius, 
+                                       fill=True,
+                                       color='black',
+                                       label='Agent')
+            self.ax.add_patch(self.agent_marker)
+
             self.current_goal_marker, = self.ax.plot([], [], marker='x', color='green', label='Current Goal')
             self.current_goals_window_marker, = self.ax.plot([], [], marker='x', color='magenta', label='Goals Window')
             self.agent_front, = self.ax.plot([], [], linestyle='-', color='red', label='Agent Nose')
             self.desired_yaw, = self.ax.plot([], [], linestyle='--', color='orange', label='Desired Yaw')
+            self.obstacle_marker, = self.ax.plot([], [], marker='s', color='red', label='Obstacle')
+            self.agent_footprint_marker, = self.ax.plot([], [], marker='o', color='black', markersize=self.agent_footprint_radius, label='Agent Footprint')
 
             self.distance_title = self.ax.set_title('Distance to Goal: 0.00m | Current tick: 0')
 
-            self.ax.set_xlim(-10, 110)
-            self.ax.set_ylim(-5, 5)
+            self.ax.set_xlim(-5, 100)
+            self.ax.set_ylim(-8, 8)
+            self.ax.set_aspect('equal')
             self.ax.legend()
             plt.ion()
             plt.show(block = False)
@@ -164,7 +184,7 @@ class SimplePathFollowingEnv(gym.Env):
 
         # Show current agent position
         agent_x, agent_y = self.current_position
-        self.agent_marker.set_data([agent_x], [agent_y])
+        self.agent_marker.set_center((agent_x, agent_y))
 
         front_x = agent_x + 0.5 * np.cos(self.agent_yaw)
         front_y = agent_y + 0.5 * np.sin(self.agent_yaw)
@@ -177,6 +197,12 @@ class SimplePathFollowingEnv(gym.Env):
         if self.current_goals_window_position.size > 0:
             multi_goals_x, multi_goals_y = zip(*self.current_goals_window_position)
             self.current_goals_window_marker.set_data(multi_goals_x, multi_goals_y)
+ 
+        if hasattr(self, 'obstacle') and self.obstacle is not None:
+            obstacle_x, obstacle_y = self.obstacle['position']
+            obstacle_size = self.obstacle['size']
+            self.obstacle_marker.set_data([obstacle_x], [obstacle_y])
+            # self.obstacle_marker.set_markersize(obstacle_size)
 
         self.distance_title.set_text(f'Goal distance: {self.current_goal_distance:.2f}m | Current tick: {self.tick}')
 
@@ -218,12 +244,16 @@ class SimplePathFollowingEnv(gym.Env):
         '''
         Get the current state of the environment.
         '''
+
         return np.array([
             self.current_goal_distance,
             self.previous_action[0],
             self.previous_action[1],
             self.desired_yaw_angle,
-            *self.distances
+            *self.distances,
+            self.obstacle['position'][0],
+            self.obstacle['position'][1],
+            self.obstacle['size']
         ])
 
     def _rewards(self) -> float:
@@ -235,9 +265,12 @@ class SimplePathFollowingEnv(gym.Env):
         sucess_reward = 0.0
         reward_distance = 0.0
         truncated_reward = 0.0
+        reward_obstacle_collision = 0.0
 
         reward_distance = -self.current_goal_distance * 0.1
         
+        if self.obstacle_collision:
+            reward_obstacle_collision -= 100.0
         if self.is_goal_reached:
             reward_goal_reached = 10.0
         if self.is_subgoal_reached:
@@ -246,7 +279,13 @@ class SimplePathFollowingEnv(gym.Env):
             sucess_reward = 100.0
         if self.is_truncated:
             truncated_reward = -100.0
-        rewards = reward_goal_reached + sucess_reward + reward_subgoal_reached + reward_distance + truncated_reward
+        
+        rewards = reward_goal_reached + \
+                  sucess_reward + \
+                  reward_subgoal_reached + \
+                  reward_distance + \
+                  truncated_reward + \
+                  reward_obstacle_collision
 
         return rewards
     
@@ -279,15 +318,6 @@ class SimplePathFollowingEnv(gym.Env):
         '''
         Update the minor goal for the agent.
         '''
-        # if np.any(self.distances < self.goal_threshold):
-        #     self.subgoal_reacher_counter += 1
-        #     closest_goal_index = np.argmin(self.distances)
-        #     self.current_goal_index = closest_goal_index + self.current_goal_index + 1
-        #     self.current_goal_position = self.path[self.current_goal_index]
-        #     self._generate_goals_window()
-        #     self.is_subgoal_reached = True
-        #     return
-        # self.is_subgoal_reached = False
 
         # Calculate distances to available goals using correct variable names
         available_distances = np.array([self._get_distance(self.current_position, goal) 
@@ -394,3 +424,75 @@ class SimplePathFollowingEnv(gym.Env):
         Generate a window of goals for the agent to follow.
         '''
         self.current_goals_window_position = self.path[self.current_goal_index + 1:self.current_goal_index + self.num_goals_window: self.goal_step]
+
+    def _generate_obstacle(self) -> None:
+        '''
+        Generate an obstacle in the environment.
+
+        TODO: Make it works for different shapes
+        '''
+        # Get a random position on the path for the obstacle
+        obstacle_index = np.random.randint(0, len(self.path) - 1)
+        obstacle_position = self.path[obstacle_index]
+        obstacle_size = np.random.uniform(2.0, 8.0)
+
+        # Create an obstacle at the position
+        self.obstacle = {
+            'position': obstacle_position,
+            'size': obstacle_size
+        }
+
+    def _get_agent_boundary(self) -> np.ndarray:
+        '''
+        Get the boundary of the agent as a circle.
+        '''
+        num_points = 16  # Number of points to approximate the circle
+        angles = np.linspace(0, 2 * np.pi, num_points, endpoint=False)
+        
+        # Generate circle points around the agent's center position
+        circle_points = []
+        for angle in angles:
+            x = self.current_position[0] + self.agent_radius * np.cos(angle)
+            y = self.current_position[1] + self.agent_radius * np.sin(angle)
+            circle_points.append([x, y])
+        
+        return np.array(circle_points)
+    
+    def _get_obstacle_boundary(self) -> np.ndarray:
+        '''
+        Get the boundary of the obstacle.
+        '''
+        if self.obstacle is None:
+            return None
+        
+        obstacle_x, obstacle_y = self.obstacle['position']
+        obstacle_size = self.obstacle['size']
+        obstacle_radius = obstacle_size
+
+        return np.array([
+            [obstacle_x - obstacle_radius, obstacle_y - obstacle_radius],
+            [obstacle_x + obstacle_radius, obstacle_y - obstacle_radius],
+            [obstacle_x + obstacle_radius, obstacle_y + obstacle_radius],
+            [obstacle_x - obstacle_radius, obstacle_y + obstacle_radius]
+        ])
+    
+    def _check_obstacle_collision(self) -> None:
+        '''
+        Check if the agent collides with the obstacle.
+        '''
+        agent_boundary = self._get_agent_boundary()
+        obstacle_boundary = self._get_obstacle_boundary()
+
+        if obstacle_boundary is None:
+            return
+        
+        # Check if any point of the agent's boundary is inside the obstacle's boundary
+        for point in agent_boundary:
+            if (obstacle_boundary[0][0] <= point[0] <= obstacle_boundary[1][0] and
+                obstacle_boundary[0][1] <= point[1] <= obstacle_boundary[2][1]):
+                self.obstacle_collision = True
+                return
+        
+        self.obstacle_collision = False
+
+        
