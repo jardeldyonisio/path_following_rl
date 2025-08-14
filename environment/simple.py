@@ -31,7 +31,7 @@ class SimplePathFollowingEnv(gym.Env):
         self.max_angular_velocity: float = 0.5
 
         self.agent_radius: float = 0.105 # Based on turtlebot3
-        self.agent_footprint_radius: float = self.agent_radius * 1.5
+        self.agent_footprint_radius: float = self.agent_radius * 1.2
 
         self.min_goal_distance: float = 0.0
         self.max_goal_distance: float = self.out_of_bound_threshold
@@ -150,7 +150,6 @@ class SimplePathFollowingEnv(gym.Env):
                                              linestyle='-', 
                                              color='blue', 
                                              label='Path')
-            # self.agent_marker, = self.ax.plot([], [], marker='o', color='black', label='Agent')
             self.agent_marker = Circle((0, 0), 
                                        self.agent_radius, 
                                        fill=True,
@@ -163,7 +162,15 @@ class SimplePathFollowingEnv(gym.Env):
             self.agent_front, = self.ax.plot([], [], linestyle='-', color='red', label='Agent Nose')
             self.desired_yaw, = self.ax.plot([], [], linestyle='--', color='orange', label='Desired Yaw')
             self.obstacle_marker, = self.ax.plot([], [], marker='s', color='red', label='Obstacle')
-            self.agent_footprint_marker, = self.ax.plot([], [], marker='o', color='black', markersize=self.agent_footprint_radius, label='Agent Footprint')
+            
+            self.agent_footprint_marker = Circle((0, 0), 
+                                           self.agent_footprint_radius, 
+                                           fill=False,
+                                           color='gray',
+                                           linestyle='--',
+                                           linewidth=2,
+                                           label='Agent Footprint')
+            self.ax.add_patch(self.agent_footprint_marker)
 
             self.distance_title = self.ax.set_title('Distance to Goal: 0.00m | Current tick: 0')
 
@@ -203,6 +210,8 @@ class SimplePathFollowingEnv(gym.Env):
             obstacle_size = self.obstacle['size']
             self.obstacle_marker.set_data([obstacle_x], [obstacle_y])
             # self.obstacle_marker.set_markersize(obstacle_size)
+
+        self.agent_footprint_marker.set_center((agent_x, agent_y))
 
         self.distance_title.set_text(f'Goal distance: {self.current_goal_distance:.2f}m | Current tick: {self.tick}')
 
