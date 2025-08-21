@@ -35,6 +35,12 @@ class SimplePathFollowingEnv(gym.Env):
         self.min_yaw_error: float = -np.pi * 2
         self.max_yaw_error: float = np.pi * 2
 
+        # Trailer parameters
+        self.trailer_length: float = 1.0  # Distance from agent to trailer axle
+        self.trailer_width: float = 0.6   # Trailer width for visualization
+        self.trailer_height: float = 1.2  # Trailer height for visualization
+        self.max_trailer_angle: float = np.pi / 3  # Maximum trailer angle relative to agent
+
         self.terminated_counter: int = 1
         
         self.action_space = gym.spaces.Box(
@@ -43,17 +49,24 @@ class SimplePathFollowingEnv(gym.Env):
             dtype=np.float32
         )
 
-        # State: [distance_to_goal, linear_vel, angular_vel, yaw_error]
+        # State: [distance_to_goal, prev_linear_action, prev_angular_action, yaw_error, 
+        #         trailer_estimated_x, trailer_estimated_y, trailer_estimated_angle, goals_window...]
         self.observation_space = gym.spaces.Box(
             low=np.array([self.min_goal_distance, 
                           -1.0, 
                           -1.0, 
-                          self.min_yaw_error
+                          self.min_yaw_error,
+                          -100.0,  # trailer estimated x
+                          -10.0,   # trailer estimated y
+                          -np.pi   # trailer estimated angle
                           ] + [self.min_goal_distance] * self.num_goals_window),
             high=np.array([self.max_goal_distance, 
                            1.0, 
                            1.0, 
-                           self.max_yaw_error
+                           self.max_yaw_error,
+                           200.0,   # trailer estimated x
+                           10.0,    # trailer estimated y
+                           np.pi    # trailer estimated angle
                            ] + [self.max_goal_distance] * self.num_goals_window),
             dtype=np.float32
         )
@@ -85,6 +98,15 @@ class SimplePathFollowingEnv(gym.Env):
         self.current_goal_position : float = self.path[0]
         self.current_position : np.ndarray = np.array([-0.3, 0.0])
         self.current_goals_window_position = self.path[1:self.goal_step * self.num_goals_window: self.goal_step]
+        
+        # Trailer real state (ground truth - not observable)
+        self.trailer_real_position: np.ndarray = np.array([-0.3 - self.trailer_length, 0.0])
+        self.trailer_real_angle: float = 0.0  # Angle relative to agent
+        
+        # Trailer estimated state (observable) - based on kinematic model
+        self.trailer_estimated_position: np.ndarray = np.array([-0.3 - self.trailer_length, 0.0])
+        self.trailer_estimated_angle: float = 0.0
+        
         self.is_subgoal_reached: bool = False
         self.goal_reached_counter: int = 0
         self.subgoal_reacher_counter: int = 0
@@ -112,6 +134,7 @@ class SimplePathFollowingEnv(gym.Env):
         self.angular_velocity = self.min_angular_velocity + (self.max_angular_velocity - self.min_angular_velocity) * ((self.current_action[1] + 1) / 2)
 
         self._update_agent_position()
+        self._update_trailer_position()
         self._get_angle_error()
         self._is_goal_reached()
         self._is_terminated()
@@ -145,6 +168,12 @@ class SimplePathFollowingEnv(gym.Env):
             self.current_goals_window_marker, = self.ax.plot([], [], marker='x', color='magenta', label='Goals Window')
             self.agent_front, = self.ax.plot([], [], linestyle='-', color='red', label='Agent Nose')
             self.desired_yaw, = self.ax.plot([], [], linestyle='--', color='orange', label='Desired Yaw')
+            
+            # Trailer markers
+            self.trailer_real_marker, = self.ax.plot([], [], 's', color='darkblue', markersize=8, label='Trailer (Real)')
+            self.trailer_estimated_marker, = self.ax.plot([], [], 's', color='lightblue', markersize=6, alpha=0.7, label='Trailer (Estimated)')
+            self.trailer_connection, = self.ax.plot([], [], linestyle='-', color='gray', alpha=0.5)
+            self.trailer_front, = self.ax.plot([], [], linestyle='-', color='darkblue', linewidth=2, alpha=0.8)
 
             self.distance_title = self.ax.set_title('Distance to Goal: 0.00m | Current tick: 0')
 
@@ -178,7 +207,22 @@ class SimplePathFollowingEnv(gym.Env):
             multi_goals_x, multi_goals_y = zip(*self.current_goals_window_position)
             self.current_goals_window_marker.set_data(multi_goals_x, multi_goals_y)
 
-        self.distance_title.set_text(f'Goal distance: {self.current_goal_distance:.2f}m | Current tick: {self.tick}')
+        # Update trailer visualization
+        self.trailer_real_marker.set_data([self.trailer_real_position[0]], [self.trailer_real_position[1]])
+        self.trailer_estimated_marker.set_data([self.trailer_estimated_position[0]], [self.trailer_estimated_position[1]])
+        
+        # Connection line between agent and trailer
+        self.trailer_connection.set_data([agent_x, self.trailer_real_position[0]], 
+                                       [agent_y, self.trailer_real_position[1]])
+        
+        # Trailer front direction marker
+        trailer_global_angle = self.agent_yaw + self.trailer_real_angle
+        trailer_front_x = self.trailer_real_position[0] + 0.4 * np.cos(trailer_global_angle)
+        trailer_front_y = self.trailer_real_position[1] + 0.4 * np.sin(trailer_global_angle)
+        self.trailer_front.set_data([self.trailer_real_position[0], trailer_front_x], 
+                                  [self.trailer_real_position[1], trailer_front_y])
+
+        self.distance_title.set_text(f'Goal distance: {self.current_goal_distance:.2f}m | Current tick: {self.tick} | Trailer angle: {self.trailer_real_angle:.2f}rad')
 
         self.fig.canvas.draw_idle()
         self.fig.canvas.flush_events()
@@ -214,6 +258,80 @@ class SimplePathFollowingEnv(gym.Env):
         dy = self.linear_velocity * np.sin(self.agent_yaw)
         self.current_position += np.array([dx, dy])
 
+    def _update_trailer_position(self, dt: float = 0.1) -> None:
+        '''
+        Update the trailer position based on bicycle model kinematics.
+        The trailer follows the agent with a simple kinematic model.
+        '''
+        # Store previous trailer position for velocity calculation
+        prev_trailer_pos = self.trailer_real_position.copy()
+        
+        # Calculate trailer position based on agent position and current trailer angle
+        # The trailer is connected behind the agent
+        trailer_global_angle = self.agent_yaw + self.trailer_real_angle + np.pi
+        self.trailer_real_position = self.current_position + self.trailer_length * np.array([
+            np.cos(trailer_global_angle),
+            np.sin(trailer_global_angle)
+        ])
+        
+        # Calculate trailer velocity
+        trailer_velocity = (self.trailer_real_position - prev_trailer_pos) / dt if dt > 0 else np.zeros(2)
+        
+        # Update trailer angle based on kinematic bicycle model
+        # The trailer angle changes based on the difference between agent and trailer heading
+        agent_to_trailer_vector = self.trailer_real_position - self.current_position
+        if np.linalg.norm(agent_to_trailer_vector) > 0:
+            trailer_heading = np.arctan2(agent_to_trailer_vector[1], agent_to_trailer_vector[0])
+            angle_diff = trailer_heading - self.agent_yaw
+            
+            # Normalize angle difference to [-pi, pi]
+            angle_diff = (angle_diff + np.pi) % (2 * np.pi) - np.pi
+            
+            # Calculate angular velocity of trailer based on agent motion
+            if self.linear_velocity > 0.001:  # Avoid division by zero
+                trailer_angular_velocity = -(self.linear_velocity * np.sin(angle_diff)) / self.trailer_length
+                self.trailer_real_angle += trailer_angular_velocity * dt
+            
+            # Clamp trailer angle to physical limits
+            self.trailer_real_angle = np.clip(self.trailer_real_angle, -self.max_trailer_angle, self.max_trailer_angle)
+        
+        # Update estimated position with noise
+        self._update_trailer_estimation()
+    
+    def _update_trailer_estimation(self) -> None:
+        '''
+        Update the estimated trailer position and angle using only observable information.
+        This uses kinematic model based on agent's motion.
+        NO ACCESS to real trailer position - pure kinematic estimation.
+        '''
+        dt = 0.1  # Same timestep as physics update
+        
+        # Estimate trailer motion based on agent's motion and kinematic model
+        # This is what a real robot would do using odometry and kinematic equations
+        
+        # Calculate expected trailer motion based on agent motion
+        if self.linear_velocity > 0.001:  # Agent is moving
+            # Estimate angular velocity of trailer based on kinematic model
+            # This uses the bicycle model equations that a real robot would use
+            estimated_trailer_angular_velocity = -(self.linear_velocity * np.sin(self.trailer_estimated_angle)) / self.trailer_length
+            
+            # Update estimated angle
+            self.trailer_estimated_angle += estimated_trailer_angular_velocity * dt
+            
+            # Clamp to physical limits
+            self.trailer_estimated_angle = np.clip(self.trailer_estimated_angle, -self.max_trailer_angle, self.max_trailer_angle)
+        
+        # Calculate estimated position based on estimated angle and agent position
+        # This is what the robot "thinks" the trailer position should be
+        estimated_global_angle = self.agent_yaw + self.trailer_estimated_angle + np.pi
+        self.trailer_estimated_position = self.current_position + self.trailer_length * np.array([
+            np.cos(estimated_global_angle),
+            np.sin(estimated_global_angle)
+        ])
+        
+        # Clamp angle to physical limits
+        self.trailer_estimated_angle = np.clip(self.trailer_estimated_angle, -self.max_trailer_angle, self.max_trailer_angle)
+
     def _get_obs(self) -> np.ndarray:
         '''
         Get the current state of the environment.
@@ -223,6 +341,9 @@ class SimplePathFollowingEnv(gym.Env):
             self.previous_action[0],
             self.previous_action[1],
             self.desired_yaw_angle,
+            self.trailer_estimated_position[0],
+            self.trailer_estimated_position[1], 
+            self.trailer_estimated_angle,
             *self.distances
         ])
 
