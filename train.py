@@ -40,7 +40,7 @@ if not os.path.exists(f"models/{timestamp}"):
     os.makedirs(f"models/{timestamp}")
 
 env = SimplePathFollowingEnv()
-obs_dim = 4 + env.num_goals_window
+obs_dim = env.observation_space.shape[0]  # Use the correct full observation space size
 agent = DDPGAgent(observation_dim=obs_dim, action_dim=2, max_action=1.0, seed=SEED)
 noise = DrQv2Noise(action_dim=env.action_space.shape[0])
 
