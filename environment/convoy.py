@@ -110,22 +110,21 @@ class ConvoyPathFollowingEnv(gym.Env):
         
         # Initialize the train (tugger with convoy) with proper geometry following reference implementation
         # Create a train with 4 trailers
-        self.train = Train(n=4)
+        self.train = Train(n=1)
         
         # Set the initial position and orientation for tractor
         # Note: tugger geometry has front wheel in +Y direction, but convoy uses +X for forward
         # So we need to subtract π/2 to align the tugger's front with the movement direction
         tugger_angle = self.agent_yaw - np.pi/2
+        
+        # Set tractor state - tugger.py will handle trailer positioning automatically
         self.train.tractor.set_state(self.current_position[0], 
                                     self.current_position[1], 
                                     0.0,  # steer_angle
                                     tugger_angle)
         
-        # Initialize all trailer angles to match the tractor's rotated orientation
-        for cart in self.train.train[1:]:  # Skip tractor (index 0)
-            cart.angle = tugger_angle
-        
-        # Update trailer positions based on initial configuration
+        # Important: Let the Train class handle trailer positioning through update_tugs()
+        # This respects the kinematic constraints and connection points defined in tugger.py
         self.train.update_tugs()
         
         # Trailer real state (ground truth - not observable)
@@ -322,12 +321,47 @@ class ConvoyPathFollowingEnv(gym.Env):
         # Note: tugger geometry has front wheel in +Y direction, but convoy uses +X for forward
         # So we need to subtract π/2 to align the tugger's front with the movement direction
         tugger_angle = self.agent_yaw - np.pi/2
+        
+        # Calculate steering angle from angular velocity using bicycle model
+        # steer_angle = arctan(angular_velocity * wheelbase / linear_velocity)
+        # Using small velocity threshold to avoid division by zero
+        min_velocity = 0.01
+        if abs(self.linear_velocity) < min_velocity:
+            steer_angle = 0.0
+        else:
+            # Bicycle model: omega = (v/L) * tan(delta)
+            # Therefore: delta = arctan(omega * L / v)
+            wheelbase = 1.5  # From tugger.py
+            steer_angle = np.arctan(self.angular_velocity * wheelbase / self.linear_velocity)
+            # Clamp steering angle to reasonable limits (-π/4 to π/4 radians, about ±45 degrees)
+            max_steer = np.pi/4
+            steer_angle = np.clip(steer_angle, -max_steer, max_steer)
+        
         self.train.tractor.set_state(self.current_position[0], 
                                     self.current_position[1], 
-                                    0.0,  # steer_angle, assuming no steering for simplicity
+                                    steer_angle,
                                     tugger_angle)
         
         # Update trailer positions based on tractor movement
+        # First, calculate proper trailer angles BEFORE updating positions
+        # This ensures tugger.py uses the correct angles for positioning
+        for i, cart in enumerate(self.train.train[1:]):  # Skip tractor (index 0)
+            if cart.tugger is not None:
+                # Get the towing point that this cart should follow
+                towing_x, towing_y = cart.tugger.get_tug_coord()
+                
+                # Calculate the angle from towing point to current cart position
+                # This represents where the cart should point to maintain the connection
+                dx = cart.x - towing_x
+                dy = cart.y - towing_y
+                
+                # In tugger coordinate system, angle=0 means pointing in +Y direction
+                # The cart should point from towing point towards its current position
+                if abs(dx) > 0.001 or abs(dy) > 0.001:  # Only update if significant separation
+                    connection_angle = np.arctan2(dx, dy)
+                    cart.angle = connection_angle
+        
+        # Now update positions using the corrected angles
         self.train.update_tugs()
 
     def _update_trailer_position(self, dt: float = 0.1) -> None:
