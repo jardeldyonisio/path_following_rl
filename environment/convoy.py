@@ -16,14 +16,15 @@ sys.path.insert(0, scripts_dir)
 
 from tugger import Tractor, Train, coords2pyplot 
 
-'''
-This class implements a single-agent environment for path following.
-'''
+# TODO: Add pause to the env.
 
 class ConvoyPathFollowingEnv(gym.Env):
+    '''
+    @brief: This class implements a convoy robot for path following.
+    '''
     def __init__(self):
         '''
-        
+        @brief: Initialize the environment.
         '''
         super().__init__()
         self.max_tick: int = 800
@@ -85,9 +86,14 @@ class ConvoyPathFollowingEnv(gym.Env):
 
         self.path = self._create_path()
         
-    def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
+    def reset(self, 
+              seed: Optional[int] = None, 
+              options: Optional[dict] = None) -> None:
         '''
-        Reset the environment to the initial state.
+        @brief: Reset the environment to the initial state.
+
+        @param seed: Random seed for reproducibility.
+        @param options: Additional options for resetting the environment.
         '''
         super().reset(seed=seed)
 
@@ -108,8 +114,8 @@ class ConvoyPathFollowingEnv(gym.Env):
         self.current_position : np.ndarray = np.array([-0.3, 0.0])
         self.current_goals_window_position = self.path[1:self.goal_step * self.num_goals_window: self.goal_step]
         
-        # Initialize the train (tugger with convoy) with proper geometry following reference implementation
-        # Create a train with 4 trailers
+        # Create a train
+        # TODO: Randomize the number of cars in the train
         self.train = Train(n=1)
         
         # Set the initial position and orientation for tractor
@@ -123,7 +129,6 @@ class ConvoyPathFollowingEnv(gym.Env):
                                     0.0,  # steer_angle
                                     tugger_angle)
         
-        # Important: Let the Train class handle trailer positioning through update_tugs()
         # This respects the kinematic constraints and connection points defined in tugger.py
         self.train.update_tugs()
         
@@ -149,20 +154,25 @@ class ConvoyPathFollowingEnv(gym.Env):
         return observation
         # return observation, info
 
-    def step(self, action):
+    def step(self, 
+             action: np.ndarray) -> None:
         '''
-        Step the environment with the given action.
+        @brief: Step the environment with the given action.
+
+        @param action: The action to take.
         '''
         terminated = False
 
         self.previous_action = self.current_action.copy() if self.current_action is not None else np.array([0.0, 0.0])
         self.current_action = np.array(action)
 
+        # TODO: Verify the scale, maybe there is a issue
         self.linear_velocity = self.min_linear_velocity + (self.max_linear_velocity - self.min_linear_velocity) * ((self.current_action[0] + 1) / 2)
         self.angular_velocity = self.min_angular_velocity + (self.max_angular_velocity - self.min_angular_velocity) * ((self.current_action[1] + 1) / 2)
 
         self._update_agent_position()
-        # self._update_trailer_position()
+        self.train.update_tugs()
+        jacobian = self.train.get_jacobian()
         self._get_angle_error()
         self._is_goal_reached()
         self._is_terminated()
@@ -182,7 +192,7 @@ class ConvoyPathFollowingEnv(gym.Env):
     
     def render(self, mode='human') -> None:
         '''
-        Render the environment.
+        @brief: Render the environment.
         '''
 
         # Verify if fig is already created and create it if not
@@ -206,11 +216,15 @@ class ConvoyPathFollowingEnv(gym.Env):
 
             self.distance_title = self.ax.set_title('Distance to Goal: 0.00m | Current tick: 0')
 
-            self.ax.set_xlim(-10, 40)
-            self.ax.set_ylim(-5, 5)
+            # TODO: Instead of define big limits, create a window and the agent will be always in the center
+            self.ax.set_xlim(self.current_position[0] - 10, self.current_position[0] + 10)
+            self.ax.set_ylim(self.current_position[1] - 5, self.current_position[1] + 2)
             self.ax.legend()
             plt.ion()
             plt.show(block = False)
+
+        self.ax.set_xlim(self.current_position[0] - 10, self.current_position[0] + 10)
+        self.ax.set_ylim(self.current_position[1] - 5, self.current_position[1] + 2)
         
         # if not done
         path_x, path_y = zip(*self.path)
@@ -266,21 +280,6 @@ class ConvoyPathFollowingEnv(gym.Env):
             multi_goals_x, multi_goals_y = zip(*self.current_goals_window_position)
             self.current_goals_window_marker.set_data(multi_goals_x, multi_goals_y)
 
-        # # Update trailer visualization
-        # self.trailer_real_marker.set_data([self.trailer_real_position[0]], [self.trailer_real_position[1]])
-        # self.trailer_estimated_marker.set_data([self.trailer_estimated_position[0]], [self.trailer_estimated_position[1]])
-        
-        # # Connection line between agent and trailer
-        # self.trailer_connection.set_data([agent_x, self.trailer_real_position[0]], 
-        #                                [agent_y, self.trailer_real_position[1]])
-        
-        # # Trailer front direction marker
-        # trailer_global_angle = self.agent_yaw + self.trailer_real_angle
-        # trailer_front_x = self.trailer_real_position[0] + 0.4 * np.cos(trailer_global_angle)
-        # trailer_front_y = self.trailer_real_position[1] + 0.4 * np.sin(trailer_global_angle)
-        # self.trailer_front.set_data([self.trailer_real_position[0], trailer_front_x], 
-        #                           [self.trailer_real_position[1], trailer_front_y])
-
         self.distance_title.set_text(f'Goal distance: {self.current_goal_distance:.2f}m | Current tick: {self.tick} | Trailer angle: {self.trailer_real_angle:.2f}rad')
 
         self.fig.canvas.draw_idle()
@@ -288,13 +287,13 @@ class ConvoyPathFollowingEnv(gym.Env):
     
     def close(self) -> None:
         '''
-        Close the environment.
+        @brief: Close the environment.
         '''
         pass
 
     def rand_action(self) -> np.ndarray:
         '''
-        Generate a random action.
+        @brief: Generate a random action.
         '''
         return np.array([
             np.random.uniform(-1.0, 1.0),
@@ -303,13 +302,13 @@ class ConvoyPathFollowingEnv(gym.Env):
 
     def _get_info(self) -> None:
         '''
-        Get the information about the current state.
+        @brief: Get the information about the current state.
         '''
         pass
     
     def _update_agent_position(self, dt: float = 0.1) -> None:
         '''
-        Update the agent position based on the current state.
+        @brief: Update the agent position based on the current state.
         '''
         self.agent_yaw += self.angular_velocity * dt
 
@@ -364,98 +363,21 @@ class ConvoyPathFollowingEnv(gym.Env):
         # Now update positions using the corrected angles
         self.train.update_tugs()
 
-    def _update_trailer_position(self, dt: float = 0.1) -> None:
-        '''
-        Update the trailer position based on bicycle model kinematics.
-        The trailer follows the agent with a simple kinematic model.
-        '''
-        # Store previous trailer position for velocity calculation
-        prev_trailer_pos = self.trailer_real_position.copy()
-        
-        # Calculate trailer position based on agent position and current trailer angle
-        # The trailer is connected behind the agent
-        trailer_global_angle = self.agent_yaw + self.trailer_real_angle + np.pi
-        self.trailer_real_position = self.current_position + self.trailer_length * np.array([
-            np.cos(trailer_global_angle),
-            np.sin(trailer_global_angle)
-        ])
-        
-        # Calculate trailer velocity
-        trailer_velocity = (self.trailer_real_position - prev_trailer_pos) / dt if dt > 0 else np.zeros(2)
-        
-        # Update trailer angle based on kinematic bicycle model
-        # The trailer angle changes based on the difference between agent and trailer heading
-        agent_to_trailer_vector = self.trailer_real_position - self.current_position
-        if np.linalg.norm(agent_to_trailer_vector) > 0:
-            trailer_heading = np.arctan2(agent_to_trailer_vector[1], agent_to_trailer_vector[0])
-            angle_diff = trailer_heading - self.agent_yaw
-            
-            # Normalize angle difference to [-pi, pi]
-            angle_diff = (angle_diff + np.pi) % (2 * np.pi) - np.pi
-            
-            # Calculate angular velocity of trailer based on agent motion
-            if self.linear_velocity > 0.001:  # Avoid division by zero
-                trailer_angular_velocity = -(self.linear_velocity * np.sin(angle_diff)) / self.trailer_length
-                self.trailer_real_angle += trailer_angular_velocity * dt
-            
-            # Clamp trailer angle to physical limits
-            self.trailer_real_angle = np.clip(self.trailer_real_angle, -self.max_trailer_angle, self.max_trailer_angle)
-        
-        # Update estimated position with noise
-        self._update_trailer_estimation()
-    
-    def _update_trailer_estimation(self) -> None:
-        '''
-        Update the estimated trailer position and angle using only observable information.
-        This uses kinematic model based on agent's motion.
-        NO ACCESS to real trailer position - pure kinematic estimation.
-        '''
-        dt = 0.1  # Same timestep as physics update
-        
-        # Estimate trailer motion based on agent's motion and kinematic model
-        # This is what a real robot would do using odometry and kinematic equations
-        
-        # Calculate expected trailer motion based on agent motion
-        if self.linear_velocity > 0.001:  # Agent is moving
-            # Estimate angular velocity of trailer based on kinematic model
-            # This uses the bicycle model equations that a real robot would use
-            estimated_trailer_angular_velocity = -(self.linear_velocity * np.sin(self.trailer_estimated_angle)) / self.trailer_length
-            
-            # Update estimated angle
-            self.trailer_estimated_angle += estimated_trailer_angular_velocity * dt
-            
-            # Clamp to physical limits
-            self.trailer_estimated_angle = np.clip(self.trailer_estimated_angle, -self.max_trailer_angle, self.max_trailer_angle)
-        
-        # Calculate estimated position based on estimated angle and agent position
-        # This is what the robot "thinks" the trailer position should be
-        estimated_global_angle = self.agent_yaw + self.trailer_estimated_angle + np.pi
-        self.trailer_estimated_position = self.current_position + self.trailer_length * np.array([
-            np.cos(estimated_global_angle),
-            np.sin(estimated_global_angle)
-        ])
-        
-        # Clamp angle to physical limits
-        self.trailer_estimated_angle = np.clip(self.trailer_estimated_angle, -self.max_trailer_angle, self.max_trailer_angle)
-
     def _get_obs(self) -> np.ndarray:
         '''
-        Get the current state of the environment.
+        @brief: Get the current state of the environment.
         '''
         return np.array([
             self.current_goal_distance,
             self.previous_action[0],
             self.previous_action[1],
             self.desired_yaw_angle,
-            self.trailer_estimated_position[0],
-            self.trailer_estimated_position[1], 
-            self.trailer_estimated_angle,
             *self.distances
         ])
 
     def _rewards(self) -> float:
         '''
-        Calculate the reward based on the current state.
+        @brief: Calculate the reward based on the current state.
         '''
         reward_goal_reached = 0.0
         reward_subgoal_reached = 0.0
@@ -479,13 +401,13 @@ class ConvoyPathFollowingEnv(gym.Env):
     
     def _goal_distance(self) -> float:
         '''
-        Calculate the distance to the goal.
+        @brief: Calculate the distance to the goal.
         '''
         return np.linalg.norm(self.current_position - self.current_goal_position)
 
     def _is_goal_reached(self) -> None:
         '''
-        Check if the goal is reached and update if in this case.
+        @brief: Check if the goal is reached and update if in this case.
         '''
         self.current_goal_distance = self._goal_distance()
 
@@ -504,7 +426,7 @@ class ConvoyPathFollowingEnv(gym.Env):
     
     def _update_subgoal(self):
         '''
-        Update the minor goal for the agent.
+        @brief: Update the minor goal for the agent.
         '''
 
         # Calculate distances to available goals using correct variable names
@@ -540,22 +462,27 @@ class ConvoyPathFollowingEnv(gym.Env):
     
     def _is_terminated(self):
         '''
-        Check if the agent is in the goal.
+        @brief: Check if the agent is in the goal.
         '''
         if self._get_distance(self.current_position, self.path[-1]) < self.goal_threshold:
             self.is_terminated = True
             return
         self.is_terminated = False
     
-    def _get_distance(self, p1 : np.ndarray, p2: np.ndarray):
+    def _get_distance(self, 
+                      p1 : np.ndarray, 
+                      p2: np.ndarray):
         '''
-        Calculate the distance between two points.
+        @brief: Calculate the distance between two points.
+
+        @param p1: The first point.
+        @param p2: The second point.
         '''
         return np.linalg.norm(p1 - p2)
     
     def _is_truncated(self) -> bool:
         '''
-        Verify if the episode is done.
+        @brief: Verify if the episode is done.
         '''
         timeout = self.tick >= self.max_tick
         out_of_bound = self.current_goal_distance > self.out_of_bound_threshold
@@ -571,9 +498,12 @@ class ConvoyPathFollowingEnv(gym.Env):
         path = self._create_path(path_type)
         return path
 
-    def _create_path(self, path_type: str = 'straight') -> np.ndarray:
+    def _create_path(self, 
+                     path_type: str = 'straight') -> np.ndarray:
         '''
-        Create path for the agent to follow.
+        @brief: Create path for the agent to follow.
+
+        @param path_type: The type of path to create.
         '''
         random_path_size = np.random.randint(50, 100)
 
@@ -594,7 +524,7 @@ class ConvoyPathFollowingEnv(gym.Env):
     
     def _get_angle_error(self) -> None:
         '''
-        Calculate the angle error between the agent and the goal.
+        @brief: Calculate the angle error between the agent and the goal.
         '''
         angle_to_goal = np.arctan2(
             self.current_goal_position[1] - self.current_position[1],
@@ -606,6 +536,6 @@ class ConvoyPathFollowingEnv(gym.Env):
     
     def _generate_goals_window(self) -> None:
         '''
-        Generate a window of goals for the agent to follow.
+        @brief: Generate a window of goals for the agent to follow.
         '''
         self.current_goals_window_position = self.path[self.current_goal_index + 1:self.current_goal_index + self.num_goals_window: self.goal_step]
