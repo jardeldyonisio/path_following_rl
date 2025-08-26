@@ -18,9 +18,10 @@ from tugger import Tractor, Train, coords2pyplot
 
 # TODO: Add pause to the env.
 
+
 class ConvoyPathFollowingEnv(gym.Env):
     '''
-    @brief: This class implements a convoy robot for path following.
+    @brief: This class implements a convoy robot environment for path following.
     '''
     def __init__(self):
         '''
@@ -45,12 +46,6 @@ class ConvoyPathFollowingEnv(gym.Env):
         self.min_yaw_error: float = -np.pi * 2
         self.max_yaw_error: float = np.pi * 2
 
-        # Trailer parameters
-        self.trailer_length: float = 1.0  # Distance from agent to trailer axle
-        self.trailer_width: float = 0.6   # Trailer width for visualization
-        self.trailer_height: float = 1.2  # Trailer height for visualization
-        self.max_trailer_angle: float = np.pi / 3  # Maximum trailer angle relative to agent
-
         self.terminated_counter: int = 1
         
         self.action_space = gym.spaces.Box(
@@ -59,24 +54,17 @@ class ConvoyPathFollowingEnv(gym.Env):
             dtype=np.float32
         )
 
-        # State: [distance_to_goal, prev_linear_action, prev_angular_action, yaw_error, 
-        #         trailer_estimated_x, trailer_estimated_y, trailer_estimated_angle, goals_window...]
+        # State: [distance_to_goal, prev_linear_action, prev_angular_action, yaw_error, goals_window...]
         self.observation_space = gym.spaces.Box(
             low=np.array([self.min_goal_distance, 
                           -1.0, 
                           -1.0, 
                           self.min_yaw_error,
-                          -100.0,  # trailer estimated x
-                          -10.0,   # trailer estimated y
-                          -np.pi   # trailer estimated angle
                           ] + [self.min_goal_distance] * self.num_goals_window),
             high=np.array([self.max_goal_distance, 
                            1.0, 
                            1.0, 
                            self.max_yaw_error,
-                           200.0,   # trailer estimated x
-                           10.0,    # trailer estimated y
-                           np.pi    # trailer estimated angle
                            ] + [self.max_goal_distance] * self.num_goals_window),
             dtype=np.float32
         )
@@ -126,19 +114,7 @@ class ConvoyPathFollowingEnv(gym.Env):
         # Set tractor state - tugger.py will handle trailer positioning automatically
         self.train.tractor.set_state(self.current_position[0], 
                                     self.current_position[1], 
-                                    0.0,  # steer_angle
                                     tugger_angle)
-        
-        # This respects the kinematic constraints and connection points defined in tugger.py
-        self.train.update_tugs()
-        
-        # Trailer real state (ground truth - not observable)
-        self.trailer_real_position: np.ndarray = np.array([-0.3 - self.trailer_length, 0.0])
-        self.trailer_real_angle: float = 0.0  # Angle relative to agent
-        
-        # Trailer estimated state (observable) - based on kinematic model
-        self.trailer_estimated_position: np.ndarray = np.array([-0.3 - self.trailer_length, 0.0])
-        self.trailer_estimated_angle: float = 0.0
         
         self.is_subgoal_reached: bool = False
         self.goal_reached_counter: int = 0
@@ -171,8 +147,6 @@ class ConvoyPathFollowingEnv(gym.Env):
         self.angular_velocity = self.min_angular_velocity + (self.max_angular_velocity - self.min_angular_velocity) * ((self.current_action[1] + 1) / 2)
 
         self._update_agent_position()
-        self.train.update_tugs()
-        jacobian = self.train.get_jacobian()
         self._get_angle_error()
         self._is_goal_reached()
         self._is_terminated()
@@ -208,12 +182,6 @@ class ConvoyPathFollowingEnv(gym.Env):
             # Initialize tugger polygon plots (will be updated with actual geometries)
             self.tugger_polygons = []
             
-            # Trailer markers
-            # self.trailer_real_marker, = self.ax.plot([], [], 's', color='darkblue', markersize=8, label='Trailer (Real)')
-            # self.trailer_estimated_marker, = self.ax.plot([], [], 's', color='lightblue', markersize=6, alpha=0.7, label='Trailer (Estimated)')
-            # self.trailer_connection, = self.ax.plot([], [], linestyle='-', color='gray', alpha=0.5)
-            # self.trailer_front, = self.ax.plot([], [], linestyle='-', color='darkblue', linewidth=2, alpha=0.8)
-
             self.distance_title = self.ax.set_title('Distance to Goal: 0.00m | Current tick: 0')
 
             # TODO: Instead of define big limits, create a window and the agent will be always in the center
@@ -243,35 +211,29 @@ class ConvoyPathFollowingEnv(gym.Env):
         self.tugger_polygons.clear()
         
         # Get train geometries (following reference: polys, circles = self.train.get_geometries())
-        try:
-            polys, circles = self.train.get_geometries()
-            
-            # Draw vehicle polygons (following reference pattern)
-            for poly in polys:
-                if len(poly) > 0:
-                    x_coords, y_coords = coords2pyplot(poly)
+        polys, circles = self.train.get_geometries()
+        
+        # Draw vehicle polygons (following reference pattern)
+        for poly in polys:
+            if len(poly) > 0:
+                x_coords, y_coords = coords2pyplot(poly)
+                
+                # Use consistent vehicle color (equivalent to CAR_COLOR in reference)
+                poly_plot, = self.ax.plot(x_coords, y_coords, 
+                                        color='black', 
+                                        linewidth=1.5, 
+                                        alpha=1.0)
+                self.tugger_polygons.append(poly_plot)
+        
+        # Draw vehicle circles/connection points (following reference pattern)
+        for circle in circles:
+            if len(circle) > 0:
+                # Draw circles as small filled circles (equivalent to pygame.gfxdraw.aacircle)
+                for point in circle:
+                    circle_plot, = self.ax.plot(point[0], point[1], 
+                                                'o', color='black', markersize=3)
+                    self.tugger_polygons.append(circle_plot)
                     
-                    # Use consistent vehicle color (equivalent to CAR_COLOR in reference)
-                    poly_plot, = self.ax.plot(x_coords, y_coords, 
-                                            color='black', 
-                                            linewidth=1.5, 
-                                            alpha=1.0)
-                    self.tugger_polygons.append(poly_plot)
-            
-            # Draw vehicle circles/connection points (following reference pattern)
-            for circle in circles:
-                if len(circle) > 0:
-                    # Draw circles as small filled circles (equivalent to pygame.gfxdraw.aacircle)
-                    for point in circle:
-                        circle_plot, = self.ax.plot(point[0], point[1], 
-                                                   'o', color='black', markersize=3)
-                        self.tugger_polygons.append(circle_plot)
-                    
-        except Exception as e:
-            # Fallback to simple agent marker if tugger rendering fails
-            fallback_marker, = self.ax.plot([agent_x], [agent_y], marker='o', color='black', markersize=8)
-            self.tugger_polygons.append(fallback_marker)
-
         desired_yaw_x = agent_x + 0.5 * np.cos(self.desired_yaw_angle + self.agent_yaw)
         desired_yaw_y = agent_y + 0.5 * np.sin(self.desired_yaw_angle + self.agent_yaw)
         self.desired_yaw.set_data([agent_x, desired_yaw_x], [agent_y, desired_yaw_y])
@@ -280,7 +242,7 @@ class ConvoyPathFollowingEnv(gym.Env):
             multi_goals_x, multi_goals_y = zip(*self.current_goals_window_position)
             self.current_goals_window_marker.set_data(multi_goals_x, multi_goals_y)
 
-        self.distance_title.set_text(f'Goal distance: {self.current_goal_distance:.2f}m | Current tick: {self.tick} | Trailer angle: {self.trailer_real_angle:.2f}rad')
+        self.distance_title.set_text(f'Goal distance: {self.current_goal_distance:.2f}m | Current tick: {self.tick}')
 
         self.fig.canvas.draw_idle()
         self.fig.canvas.flush_events()
@@ -316,30 +278,11 @@ class ConvoyPathFollowingEnv(gym.Env):
         dy = self.linear_velocity * np.sin(self.agent_yaw)
         self.current_position += np.array([dx, dy])
         
-        # Update the train tractor state following reference implementation
         # Note: tugger geometry has front wheel in +Y direction, but convoy uses +X for forward
         # So we need to subtract π/2 to align the tugger's front with the movement direction
-        tugger_angle = self.agent_yaw - np.pi/2
-        
-        # Calculate steering angle from angular velocity using bicycle model
-        # steer_angle = arctan(angular_velocity * wheelbase / linear_velocity)
-        # Using small velocity threshold to avoid division by zero
-        min_velocity = 0.01
-        if abs(self.linear_velocity) < min_velocity:
-            steer_angle = 0.0
-        else:
-            # Bicycle model: omega = (v/L) * tan(delta)
-            # Therefore: delta = arctan(omega * L / v)
-            wheelbase = 1.5  # From tugger.py
-            steer_angle = np.arctan(self.angular_velocity * wheelbase / self.linear_velocity)
-            # Clamp steering angle to reasonable limits (-π/4 to π/4 radians, about ±45 degrees)
-            max_steer = np.pi/4
-            steer_angle = np.clip(steer_angle, -max_steer, max_steer)
-        
         self.train.tractor.set_state(self.current_position[0], 
                                     self.current_position[1], 
-                                    steer_angle,
-                                    tugger_angle)
+                                    self.agent_yaw - np.pi/2)
         
         # Update trailer positions based on tractor movement
         # First, calculate proper trailer angles BEFORE updating positions
@@ -360,7 +303,6 @@ class ConvoyPathFollowingEnv(gym.Env):
                     connection_angle = np.arctan2(dx, dy)
                     cart.angle = connection_angle
         
-        # Now update positions using the corrected angles
         self.train.update_tugs()
 
     def _get_obs(self) -> np.ndarray:
