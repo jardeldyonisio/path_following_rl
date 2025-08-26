@@ -102,10 +102,21 @@ def coords2pygame(coords, window_width, window_height,
     return coords
 
 
-def pygame2coords(coords, window_width, window_height,
-                  centerx, centery, scale):
+def pygame2coords(coords, 
+                  window_width, 
+                  window_height,
+                  centerx, 
+                  centery, 
+                  scale):
     '''
-    Transforma as coordenadas do pygame para simulação
+    @brief: Transform pygame coordinates to simulation coordinates (world space)
+
+    @param coords: Coordenadas no espaço do pygame
+    @param window_width: Largura da janela do pygame
+    @param window_height: Altura da janela do pygame
+    @param centerx: Coordenada x do centro da janela
+    @param centery: Coordenada y do centro da janela
+    @param scale: Fator de escala
     '''
 
     # Ajusta formado do array de coordenadas
@@ -284,7 +295,7 @@ class Tractor:
     base_len = 0.5
     base_width = 0.335
     base_height = 0.235
-    back_drawbar = 1.0
+    back_drawbar = 0.5
     next_cart = None
 
     def __init__(self, x=0.0, y=0.0, steer_angle=0.0, angle=0.0):
@@ -299,13 +310,11 @@ class Tractor:
     def set_state(self, 
                   x: float, 
                   y: float, 
-                  steer_angle: float, 
                   angle: float):
         '''
         @brief: Define the state of the tractor.
         '''
         self.angle = angle
-        self.steer_angle = steer_angle
         self.x = x
         self.y = y
 
@@ -361,6 +370,8 @@ class Tractor:
                                 0.0)]
         
         # rear_tyres
+
+        # TODO: Add some marker on tyres to be easier to visualize their moves
 
         # Drawbars
         x2 = 0.0
@@ -473,40 +484,6 @@ class Train:
         if len(self.train) > 0:
             self.train[0].update_tugs()
 
-    def update_goal(self, y, x, dt=0.01):
-        '''
-        Atualiza o alvo para onde o comboio deve
-        tentar seguir
-        '''
-        # Atualiza o objetivo
-        self.x_goal = x
-        self.y_goal = y
-
-        # Calcula o erro Cartesiano
-        #tractor_x, tractor_y = self.tractor.get_tug_coord()
-        #x_err = self.x_goal - tractor_y
-        #y_err = self.y_goal - tractor_x
-        x_err = self.x_goal - self.tractor.y
-        y_err = self.y_goal - self.tractor.x
-
-        # Calcula o erro polar
-        d_err_new = np.sqrt(x_err**2 + y_err**2)
-        angle_err_new = np.arctan2(-y_err, x_err) \
-            - self.tractor.angle - self.tractor.steer_angle
-
-        # TODO: Preciso disso?
-        # if d_err_new < 0.02:
-        #    d_err_new = 0.0
-        #    angle_err_new = 0.0
-
-        # Calcula as derivadas
-        self.d_err_dot = (d_err_new - self.d_err) / dt
-        self.angle_err_dot = (angle_err_new - self.angle_err) / dt
-
-        # Atualiza os erros polares
-        self.d_err = d_err_new
-        self.angle_err = angle_err_new
-
     def get_state(self):
         '''
         Retorna o vetor de estados q
@@ -540,20 +517,19 @@ class Train:
         # Ajusta o estado do trator
         if len(self.train) > 0:
             tractor = self.train[0]
-            x, y, steer_angle, angle = q[:4]
-            tractor.set_state(x, y, steer_angle, angle)
+            x, y, angle = q[:3]
+            tractor.set_state(x, y, angle)
             # Ajusta o estado de cada reboque
             for i, cart in enumerate(self.train[1:]):
-                cart.angle = q[4 + 2*i + 1]
-                cart.steer_angle = q[4 + 2*i] - cart.angle
+                cart.angle = q[3 + 2*i + 1]
+                cart.steer_angle = q[3 + 2*i] - cart.angle
         # Atualiza posições
         self.update_tugs()
 
     def get_jacobian(self):
         '''
-        Retorna o Jacobiano do sistema. Aqui
-        eu segui o artigo https://doi.org/10.2507/IJSIMM20-2-550
-        Foram feitos apenas alguns pequenos ajustes.
+        @brief: Return the Jacobian matrix of the system.
+        Reference: https://doi.org/10.2507/IJSIMM20-2-550
         '''
 
         # Iniciamos com uma lista, pois fica mais simples
@@ -568,92 +544,95 @@ class Train:
             # semelhantes aos nomes usados no artigo
             tractor = self.train[0]
             beta_0 = tractor.angle
-            alpha_0s = tractor.angle
-            r_0f = tractor.tyre_radius
             d_0 = tractor.back_drawbar
 
+            # Eq 4
+            f_l0 = np.cos(beta_0)
+
+            # Eq 5
+            f_a0 = np.sin(beta_0)
+
             # Eq 6 (primeiros 4 elementos)
-            J += [[np.cos(beta_0), 0.0],
-                  [np.sin(beta_0), 0.0],
+            J += [[f_l0, 0.0],
+                  [f_a0, 0.0],
                   [0.0, 1.0]]
 
-            # # Agora vamos para os reboques
-            # f_ai2 = None  # Essa variável será definida depois
-            # f_li2 = None  # Essa variável será definida depois
-            # for i in range(self.n):
-            #     # Reboque atual é i+1 (pois i=0 é o trator,
-            #     # e n é o número de reboques, ou seja,
-            #     # temos um total de n+1 elementos)
-            #     c_now = self.train[i+1]
+            # Carts kinematics
+            f_ai2 = None
+            f_li2 = None 
+            for i in range(self.n):
+                # The current trailer is i+1 because i=0 is the tractor,
+                # and i=1 is the first trailer
+                c_now = self.train[i+1]
 
-            #     # Esse é o ângulo absoluto do esterçamento
-            #     # desse reboque, no sistema de coordenadas
-            #     # global
-            #     beta_1 = c_now.angle + c_now.steer_angle
+                # Esse é o ângulo absoluto do esterçamento
+                # desse reboque, no sistema de coordenadas
+                # global
+                beta_1 = c_now.angle + c_now.steer_angle
 
-            #     # Comprimento do cambão dianteiro
-            #     d_pi = c_now.front_drawbar
+                # Comprimento do cambão dianteiro
+                d_pi = c_now.front_drawbar
 
-            #     # Ângulo de esterçamento
-            #     beta_steer = c_now.steer_angle
+                # Ângulo de esterçamento
+                beta_steer = c_now.steer_angle
 
-            #     # Distância entre os eixos
-            #     h_i = c_now.wheelbase
+                # Distância entre os eixos
+                h_i = c_now.wheelbase
 
-            #     # Tratamos separado o primeiro reboque,
-            #     # como sugere o artigo
-            #     if i == 0:
-            #         # Esse é o ângulo entre o reboque da
-            #         # frente e o cambão do reboque atual
-            #         beta_tug = beta_0 - beta_1
+                # Tratamos separado o primeiro reboque,
+                # como sugere o artigo
+                if i == 0:
+                    # Esse é o ângulo entre o reboque da
+                    # frente e o cambão do reboque atual
+                    beta_tug = beta_0 - beta_1
 
-            #         # Eq 7
-            #         f_li1 = f_l0*np.cos(beta_tug) + \
-            #             f_a0*d_0*np.sin(beta_tug)
+                    # Eq 7
+                    f_li1 = f_l0*np.cos(beta_tug) + \
+                        f_a0*d_0*np.sin(beta_tug)
 
-            #         # Eq 8
-            #         f_ai1 = (f_l0*np.sin(beta_tug) -
-            #                  f_a0*d_0*np.cos(beta_tug)) / d_pi
+                    # Eq 8
+                    f_ai1 = (f_l0*np.sin(beta_tug) -
+                             f_a0*d_0*np.cos(beta_tug)) / d_pi
 
-            #     # Reboques depois do primeiro...
-            #     else:
+                # Reboques depois do primeiro...
+                else:
 
-            #         # Reboque anterior é o i (lembre que o atual
-            #         # é i+1)
-            #         c_bef = self.train[i]
+                    # Reboque anterior é o i (lembre que o atual
+                    # é i+1)
+                    c_bef = self.train[i]
 
-            #         # Ângulo do reboque anterior
-            #         beta_2 = c_bef.angle
+                    # Ângulo do reboque anterior
+                    beta_2 = c_bef.angle
 
-            #         # Ângulo entre o reboque da frente e
-            #         # o cambão do atual.
-            #         beta_tug = beta_2 - beta_1
+                    # Ângulo entre o reboque da frente e
+                    # o cambão do atual.
+                    beta_tug = beta_2 - beta_1
 
-            #         # Distância do centro do reboque até o ponto
-            #         # de conexão na parte de trás
-            #         d_tug = c_bef.back_drawbar + c_bef.wheelbase/2.0
+                    # Distância do centro do reboque até o ponto
+                    # de conexão na parte de trás
+                    d_tug = c_bef.back_drawbar + c_bef.wheelbase/2.0
 
-            #         # Eq 9
-            #         f_li1 = f_li2 * np.cos(beta_tug) + \
-            #             f_ai2 * d_tug * np.sin(beta_tug)
+                    # Eq 9
+                    f_li1 = f_li2 * np.cos(beta_tug) + \
+                        f_ai2 * d_tug * np.sin(beta_tug)
 
-            #         # Eq 10
-            #         f_ai1 = (f_li2 * np.sin(beta_tug) -
-            #                  f_ai2 * d_tug * np.cos(beta_tug)) / d_pi
+                    # Eq 10
+                    f_ai1 = (f_li2 * np.sin(beta_tug) -
+                             f_ai2 * d_tug * np.cos(beta_tug)) / d_pi
 
-            #     # Atenção, essas variáveis abaixo são calculadas
-            #     # ao final do laço para serem usadas na próxima
-            #     # iteração.
+                # Atenção, essas variáveis abaixo são calculadas
+                # ao final do laço para serem usadas na próxima
+                # iteração.
 
-            #     # Eq 11
-            #     f_li2 = f_li1 * np.cos(beta_steer)
+                # Eq 11
+                f_li2 = f_li1 * np.cos(beta_steer)
 
-            #     # Eq 12
-            #     f_ai2 = 2.0 * f_li1 * np.sin(beta_steer) / h_i
+                # Eq 12
+                f_ai2 = 2.0 * f_li1 * np.sin(beta_steer) / h_i
 
-            #     # Adiciona duas linhas à matriz Jacobiano
-            #     J += [[f_ai1, 0],
-            #           [f_ai2, 0]]
+                # Adiciona duas linhas à matriz Jacobiano
+                J += [[f_ai1, 0],
+                      [f_ai2, 0]]
 
         # Transforma em array do NumPy
         J = np.array(J)
