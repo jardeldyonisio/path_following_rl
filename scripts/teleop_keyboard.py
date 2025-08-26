@@ -1,18 +1,26 @@
+import sys
+import os
 import time
 import numpy as np
 from pynput import keyboard
-from environment.simple import SimplePathFollowingEnv
+
+# Add the parent directory to the path to import the environment module
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.join(current_dir, '..')
+sys.path.insert(0, parent_dir)
+
+from environment.convoy import ConvoyPathFollowingEnv
 
 class ManualControl:
     def __init__(self, env):
         self.env = env
         self.current_action = np.array([0.00, 0.0])  # [linear_velocity, angular_velocity]
         self.action_map = {
-            keyboard.Key.up: [0.1, 0.0],     # Acelera para frente
-            keyboard.Key.down: [-0.1, 0.0],  # Ré
-            keyboard.Key.left: [0.0, 0.5],   # Gira para esquerda
-            keyboard.Key.right: [0.0, -0.5], # Gira para direita
-            keyboard.Key.space: [0.0, 0.0]   # Para o robô
+            keyboard.Key.up: [1.0, 0.0],     # Full forward
+            keyboard.Key.down: [-1.0, 0.0],  # Full reverse
+            keyboard.Key.left: [0.0, 1.0],   # Full left turn
+            keyboard.Key.right: [0.0, -1.0], # Full right turn
+            keyboard.Key.space: [0.0, 0.0]   # Stop
         }
         self.listener = None
         self.running = True
@@ -67,6 +75,6 @@ class ManualControl:
         self.listener.stop()
 
 if __name__ == "__main__":
-    env = SimplePathFollowingEnv()
+    env = ConvoyPathFollowingEnv()
     controller = ManualControl(env)
     controller.start()
