@@ -54,7 +54,7 @@ class ConvoyPathFollowingEnv(gym.Env):
             dtype=np.float32
         )
 
-        # State: [distance_to_goal, prev_linear_action, prev_angular_action, yaw_error, goals_window...]
+        # State: [distance_to_goal, prev_linear_action, prev_angular_action, yaw_error, goals_window]
         self.observation_space = gym.spaces.Box(
             low=np.array([self.min_goal_distance, 
                           -1.0, 
