@@ -18,6 +18,36 @@ from tugger import Tractor, Train, coords2pyplot
 
 # TODO: Add pause to the env.
 
+def pixels_to_world_size(ax, pixel_size):
+    """
+    Converts a marker size from pixels to world units for a given Matplotlib axis.
+    This ensures the marker keeps the same size regardless of zoom/pan.
+
+    Args:
+        ax: The matplotlib Axes object.
+        pixel_size: Desired marker size in pixels.
+
+    Returns:
+        size_in_world: Marker size in world units (data coordinates).
+    """
+    # Get axis limits
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    # Get axis size in pixels
+    bbox = ax.get_window_extent().transformed(ax.figure.dpi_scale_trans.inverted())
+    width, height = bbox.width * ax.figure.dpi, bbox.height * ax.figure.dpi
+
+    # Calculate world units per pixel
+    x_per_pixel = abs(xlim[1] - xlim[0]) / width
+    y_per_pixel = abs(ylim[1] - ylim[0]) / height
+
+    # Use the average for isotropic scaling (or pick x/y as needed)
+    size_in_world = pixel_size * (x_per_pixel + y_per_pixel) / 2.0
+    return size_in_world
+
+# # Suppose you want a marker of 10 pixels
+# marker_size_world = pixels_to_world_size(ax, 10)
+# ax.plot(x, y, marker='o', markersize=marker_size_world)
 
 class ConvoyPathFollowingEnv(gym.Env):
     '''
