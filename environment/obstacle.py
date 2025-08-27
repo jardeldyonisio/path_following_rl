@@ -4,58 +4,18 @@
 import numpy as np
 import gymnasium as gym
 import matplotlib.pyplot as plt
+from matplotlib.patches import Circle
 
-from typing import Optional
-import sys
-import os
+from typing import Optional 
 
-# Add the scripts directory to the path to import tugger
-current_dir = os.path.dirname(os.path.abspath(__file__))
-scripts_dir = os.path.join(current_dir, '..', 'scripts')
-sys.path.insert(0, scripts_dir)
+'''
+This class implements a single-agent environment for path following.
+'''
 
-from tugger import Tractor, Train, coords2pyplot 
-
-# TODO: Add pause to the env.
-
-def pixels_to_world_size(ax, pixel_size):
-    """
-    Converts a marker size from pixels to world units for a given Matplotlib axis.
-    This ensures the marker keeps the same size regardless of zoom/pan.
-
-    Args:
-        ax: The matplotlib Axes object.
-        pixel_size: Desired marker size in pixels.
-
-    Returns:
-        size_in_world: Marker size in world units (data coordinates).
-    """
-    # Get axis limits
-    xlim = ax.get_xlim()
-    ylim = ax.get_ylim()
-    # Get axis size in pixels
-    bbox = ax.get_window_extent().transformed(ax.figure.dpi_scale_trans.inverted())
-    width, height = bbox.width * ax.figure.dpi, bbox.height * ax.figure.dpi
-
-    # Calculate world units per pixel
-    x_per_pixel = abs(xlim[1] - xlim[0]) / width
-    y_per_pixel = abs(ylim[1] - ylim[0]) / height
-
-    # Use the average for isotropic scaling (or pick x/y as needed)
-    size_in_world = pixel_size * (x_per_pixel + y_per_pixel) / 2.0
-    return size_in_world
-
-# # Suppose you want a marker of 10 pixels
-# marker_size_world = pixels_to_world_size(ax, 10)
-# ax.plot(x, y, marker='o', markersize=marker_size_world)
-
-class ConvoyPathFollowingEnv(gym.Env):
-    '''
-    @brief: This class implements a convoy robot environment for path following.
-    '''
+class ObstaclePathFollowingEnv(gym.Env):
     def __init__(self):
         '''
-        @brief: Initialize the environment.
+        
         '''
         super().__init__()
         self.max_tick: int = 800
@@ -69,6 +29,11 @@ class ConvoyPathFollowingEnv(gym.Env):
 
         self.min_angular_velocity: float = -0.5
         self.max_angular_velocity: float = 0.5
+
+        self.agent_radius: float = 0.105 # Based on turtlebot3
+        self.agent_footprint_radius: float = self.agent_radius * 1.2
+
+        self.inflation_radius: float = 0.2
 
         self.min_goal_distance: float = 0.0
         self.max_goal_distance: float = self.out_of_bound_threshold
@@ -84,18 +49,21 @@ class ConvoyPathFollowingEnv(gym.Env):
             dtype=np.float32
         )
 
-        # State: [distance_to_goal, prev_linear_action, prev_angular_action, yaw_error, goals_window]
+        # State: [distance_to_goal, linear_vel, angular_vel, yaw_error]
         self.observation_space = gym.spaces.Box(
             low=np.array([self.min_goal_distance, 
                           -1.0, 
                           -1.0, 
-                          self.min_yaw_error,
+                          self.min_yaw_error
                           ] + [self.min_goal_distance] * self.num_goals_window),
+                           # Add obstacle position and size
+
             high=np.array([self.max_goal_distance, 
                            1.0, 
                            1.0, 
-                           self.max_yaw_error,
+                           self.max_yaw_error
                            ] + [self.max_goal_distance] * self.num_goals_window),
+                           # Add obstacle position and size
             dtype=np.float32
         )
 
@@ -104,14 +72,9 @@ class ConvoyPathFollowingEnv(gym.Env):
 
         self.path = self._create_path()
         
-    def reset(self, 
-              seed: Optional[int] = None, 
-              options: Optional[dict] = None) -> None:
+    def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
         '''
-        @brief: Reset the environment to the initial state.
-
-        @param seed: Random seed for reproducibility.
-        @param options: Additional options for resetting the environment.
+        Reset the environment to the initial state.
         '''
         super().reset(seed=seed)
 
@@ -119,6 +82,7 @@ class ConvoyPathFollowingEnv(gym.Env):
             np.random.seed(seed)
 
         self.path = self._switch_path()
+        self._generate_obstacle()
 
         self.agent_yaw : float = 0.0
         self.desired_yaw_angle: float = 0.0
@@ -131,21 +95,6 @@ class ConvoyPathFollowingEnv(gym.Env):
         self.current_goal_position : float = self.path[0]
         self.current_position : np.ndarray = np.array([-0.3, 0.0])
         self.current_goals_window_position = self.path[1:self.goal_step * self.num_goals_window: self.goal_step]
-        
-        # Create a train
-        # TODO: Randomize the number of cars in the train
-        self.train = Train(n=1)
-        
-        # Set the initial position and orientation for tractor
-        # Note: tugger geometry has front wheel in +Y direction, but convoy uses +X for forward
-        # So we need to subtract π/2 to align the tugger's front with the movement direction
-        tugger_angle = self.agent_yaw - np.pi/2
-        
-        # Set tractor state - tugger.py will handle trailer positioning automatically
-        self.train.tractor.set_state(self.current_position[0], 
-                                    self.current_position[1], 
-                                    tugger_angle)
-        
         self.is_subgoal_reached: bool = False
         self.goal_reached_counter: int = 0
         self.subgoal_reacher_counter: int = 0
@@ -153,6 +102,7 @@ class ConvoyPathFollowingEnv(gym.Env):
         self.is_terminated: bool = False
         self.is_truncated: bool = False
         self.distances = np.zeros(self.num_goals_window)
+        self.obstacle_collision: bool = False
 
         observation = self._get_obs()
         info = self._get_info()
@@ -160,19 +110,15 @@ class ConvoyPathFollowingEnv(gym.Env):
         return observation
         # return observation, info
 
-    def step(self, 
-             action: np.ndarray) -> None:
+    def step(self, action):
         '''
-        @brief: Step the environment with the given action.
-
-        @param action: The action to take.
+        Step the environment with the given action.
         '''
         terminated = False
 
         self.previous_action = self.current_action.copy() if self.current_action is not None else np.array([0.0, 0.0])
         self.current_action = np.array(action)
 
-        # TODO: Verify the scale, maybe there is a issue
         self.linear_velocity = self.min_linear_velocity + (self.max_linear_velocity - self.min_linear_velocity) * ((self.current_action[0] + 1) / 2)
         self.angular_velocity = self.min_angular_velocity + (self.max_angular_velocity - self.min_angular_velocity) * ((self.current_action[1] + 1) / 2)
 
@@ -196,7 +142,7 @@ class ConvoyPathFollowingEnv(gym.Env):
     
     def render(self, mode='human') -> None:
         '''
-        @brief: Render the environment.
+        Render the environment.
         '''
 
         # Verify if fig is already created and create it if not
@@ -204,66 +150,76 @@ class ConvoyPathFollowingEnv(gym.Env):
             self.fig, self.ax = plt.subplots()
 
             # Create markers
-            self.path_marker, = self.ax.plot([], [], linestyle='-', color='blue', label='Path')
+            self.path_marker, = self.ax.plot([], 
+                                             [], 
+                                             linestyle='-', 
+                                             color='blue', 
+                                             label='Path')
+            self.agent_marker = Circle((0, 0), 
+                                       self.agent_radius, 
+                                       fill=True,
+                                       color='black',
+                                       label='Agent')
+            self.ax.add_patch(self.agent_marker)
+
             self.current_goal_marker, = self.ax.plot([], [], marker='x', color='green', label='Current Goal')
             self.current_goals_window_marker, = self.ax.plot([], [], marker='x', color='magenta', label='Goals Window')
+            self.agent_front, = self.ax.plot([], [], linestyle='-', color='red', label='Agent Nose')
             self.desired_yaw, = self.ax.plot([], [], linestyle='--', color='orange', label='Desired Yaw')
             
-            # Initialize tugger polygon plots (will be updated with actual geometries)
-            self.tugger_polygons = []
+            self.obstacle_marker = Circle((0, 0), 
+                                    0,  # Initial radius 0, will be updated
+                                    fill=True,
+                                    color='red',
+                                    alpha=0.7,
+                                    label='Obstacle')
+            self.ax.add_patch(self.obstacle_marker)
+
+            # Obstacle costmap (inflation area)
+            self.obstacle_costmap = Circle((0, 0),
+                                     0,  # Initial radius 0, will be updated
+                                     fill=False,
+                                     color='red',
+                                     linestyle=':',
+                                     linewidth=2,
+                                     alpha=0.5,
+                                     label='Obstacle Costmap')
+            self.ax.add_patch(self.obstacle_costmap)
             
+            self.agent_footprint_marker = Circle((0, 0),
+                                           self.agent_footprint_radius, 
+                                           fill=False,
+                                           color='gray',
+                                           linestyle='--',
+                                           linewidth=2,
+                                           label='Agent Footprint')
+            self.ax.add_patch(self.agent_footprint_marker)
+
             self.distance_title = self.ax.set_title('Distance to Goal: 0.00m | Current tick: 0')
 
-            # TODO: Instead of define big limits, create a window and the agent will be always in the center
-            self.ax.set_xlim(self.current_position[0] - 10, self.current_position[0] + 10)
-            self.ax.set_ylim(self.current_position[1] - 5, self.current_position[1] + 2)
+            self.ax.set_xlim(-5, 45)
+            self.ax.set_ylim(-8, 8)
+            self.ax.set_aspect('equal')
             self.ax.legend()
             plt.ion()
             plt.show(block = False)
-
-        self.ax.set_xlim(self.current_position[0] - 10, self.current_position[0] + 10)
-        self.ax.set_ylim(self.current_position[1] - 5, self.current_position[1] + 2)
         
         # if not done
         path_x, path_y = zip(*self.path)
         self.path_marker.set_data(path_x, path_y)
 
-        # Show current goal with cross marker (following reference pattern)
+        # Show current goal
         goal_x, goal_y = self.current_goal_position
         self.current_goal_marker.set_data([goal_x], [goal_y])
 
-        # Render tugger (train) with proper geometry following reference implementation
+        # Show current agent position
         agent_x, agent_y = self.current_position
-        
-        # Clear previous tugger polygons
-        for poly_plot in self.tugger_polygons:
-            poly_plot.remove()
-        self.tugger_polygons.clear()
-        
-        # Get train geometries (following reference: polys, circles = self.train.get_geometries())
-        polys, circles = self.train.get_geometries()
-        
-        # Draw vehicle polygons (following reference pattern)
-        for poly in polys:
-            if len(poly) > 0:
-                x_coords, y_coords = coords2pyplot(poly)
-                
-                # Use consistent vehicle color (equivalent to CAR_COLOR in reference)
-                poly_plot, = self.ax.plot(x_coords, y_coords, 
-                                        color='black', 
-                                        linewidth=1.5, 
-                                        alpha=1.0)
-                self.tugger_polygons.append(poly_plot)
-        
-        # Draw vehicle circles/connection points (following reference pattern)
-        for circle in circles:
-            if len(circle) > 0:
-                # Draw circles as small filled circles (equivalent to pygame.gfxdraw.aacircle)
-                for point in circle:
-                    circle_plot, = self.ax.plot(point[0], point[1], 
-                                                'o', color='black', markersize=3)
-                    self.tugger_polygons.append(circle_plot)
-                    
+        self.agent_marker.set_center((agent_x, agent_y))
+
+        front_x = agent_x + 0.5 * np.cos(self.agent_yaw)
+        front_y = agent_y + 0.5 * np.sin(self.agent_yaw)
+        self.agent_front.set_data([agent_x, front_x], [agent_y, front_y])
+
         desired_yaw_x = agent_x + 0.5 * np.cos(self.desired_yaw_angle + self.agent_yaw)
         desired_yaw_y = agent_y + 0.5 * np.sin(self.desired_yaw_angle + self.agent_yaw)
         self.desired_yaw.set_data([agent_x, desired_yaw_x], [agent_y, desired_yaw_y])
@@ -271,6 +227,28 @@ class ConvoyPathFollowingEnv(gym.Env):
         if self.current_goals_window_position.size > 0:
             multi_goals_x, multi_goals_y = zip(*self.current_goals_window_position)
             self.current_goals_window_marker.set_data(multi_goals_x, multi_goals_y)
+ 
+        # Update obstacle and costmap in world space
+        if hasattr(self, 'obstacle') and self.obstacle is not None:
+            obstacle_x, obstacle_y = self.obstacle['position']
+            obstacle_size = self.obstacle['size']
+            obstacle_radius = obstacle_size / 2
+            
+            # Update core obstacle
+            self.obstacle_marker.set_center((obstacle_x, obstacle_y))
+            self.obstacle_marker.set_radius(obstacle_radius)
+            self.obstacle_marker.set_visible(True)
+            
+            # Update costmap (core + inflation radius)
+            costmap_radius = obstacle_radius + self.inflation_radius
+            self.obstacle_costmap.set_center((obstacle_x, obstacle_y))
+            self.obstacle_costmap.set_radius(costmap_radius)
+            self.obstacle_costmap.set_visible(True)
+        else:
+            self.obstacle_marker.set_visible(False)
+            self.obstacle_costmap.set_visible(False)
+
+        self.agent_footprint_marker.set_center((agent_x, agent_y))
 
         self.distance_title.set_text(f'Goal distance: {self.current_goal_distance:.2f}m | Current tick: {self.tick}')
 
@@ -279,13 +257,13 @@ class ConvoyPathFollowingEnv(gym.Env):
     
     def close(self) -> None:
         '''
-        @brief: Close the environment.
+        Close the environment.
         '''
         pass
 
     def rand_action(self) -> np.ndarray:
         '''
-        @brief: Generate a random action.
+        Generate a random action.
         '''
         return np.array([
             np.random.uniform(-1.0, 1.0),
@@ -294,70 +272,51 @@ class ConvoyPathFollowingEnv(gym.Env):
 
     def _get_info(self) -> None:
         '''
-        @brief: Get the information about the current state.
+        Get the information about the current state.
         '''
         pass
     
     def _update_agent_position(self, dt: float = 0.1) -> None:
         '''
-        @brief: Update the agent position based on the current state.
+        Update the agent position based on the current state.
         '''
         self.agent_yaw += self.angular_velocity * dt
 
         dx = self.linear_velocity * np.cos(self.agent_yaw)
         dy = self.linear_velocity * np.sin(self.agent_yaw)
         self.current_position += np.array([dx, dy])
-        
-        # Agora frente = +X, basta passar self.agent_yaw
-        self.train.tractor.set_state(self.current_position[0], 
-                        self.current_position[1], 
-                        self.agent_yaw)
-        
-        # Update trailer positions based on tractor movement
-        # First, calculate proper trailer angles BEFORE updating positions
-        # This ensures tugger.py uses the correct angles for positioning
-        for i, cart in enumerate(self.train.train[1:]):  # Skip tractor (index 0)
-            if cart.tugger is not None:
-                # Get the towing point that this cart should follow
-                towing_x, towing_y = cart.tugger.get_tug_coord()
-                
-                # Calculate the angle from towing point to current cart position
-                # This represents where the cart should point to maintain the connection
-                dx = cart.x - towing_x
-                dy = cart.y - towing_y
-                
-                # In tugger coordinate system, angle=0 means pointing in +Y direction
-                # The cart should point from towing point towards its current position
-                if abs(dx) > 0.001 or abs(dy) > 0.001:  # Only update if significant separation
-                    connection_angle = np.arctan2(dx, dy)
-                    cart.angle = connection_angle
-        
-        self.train.update_tugs()
 
     def _get_obs(self) -> np.ndarray:
         '''
-        @brief: Get the current state of the environment.
+        Get the current state of the environment.
         '''
+
         return np.array([
             self.current_goal_distance,
             self.previous_action[0],
             self.previous_action[1],
             self.desired_yaw_angle,
-            *self.distances
+            *self.distances,
+            self.obstacle['position'][0],
+            self.obstacle['position'][1],
+            self.obstacle['size']
         ])
 
     def _rewards(self) -> float:
         '''
-        @brief: Calculate the reward based on the current state.
+        Calculate the reward based on the current state.
         '''
         reward_goal_reached = 0.0
         reward_subgoal_reached = 0.0
         sucess_reward = 0.0
         reward_distance = 0.0
         truncated_reward = 0.0
+        reward_obstacle_collision = 0.0
 
         reward_distance = -self.current_goal_distance * 0.1
         
+        if self.obstacle_collision:
+            reward_obstacle_collision -= 100.0
         if self.is_goal_reached:
             reward_goal_reached = 10.0
         if self.is_subgoal_reached:
@@ -366,19 +325,25 @@ class ConvoyPathFollowingEnv(gym.Env):
             sucess_reward = 100.0
         if self.is_truncated:
             truncated_reward = -100.0
-        rewards = reward_goal_reached + sucess_reward + reward_subgoal_reached + reward_distance + truncated_reward
+        
+        rewards = reward_goal_reached + \
+                  sucess_reward + \
+                  reward_subgoal_reached + \
+                  reward_distance + \
+                  truncated_reward + \
+                  reward_obstacle_collision
 
         return rewards
     
     def _goal_distance(self) -> float:
         '''
-        @brief: Calculate the distance to the goal.
+        Calculate the distance to the goal.
         '''
         return np.linalg.norm(self.current_position - self.current_goal_position)
 
     def _is_goal_reached(self) -> None:
         '''
-        @brief: Check if the goal is reached and update if in this case.
+        Check if the goal is reached and update if in this case.
         '''
         self.current_goal_distance = self._goal_distance()
 
@@ -397,7 +362,7 @@ class ConvoyPathFollowingEnv(gym.Env):
     
     def _update_subgoal(self):
         '''
-        @brief: Update the minor goal for the agent.
+        Update the minor goal for the agent.
         '''
 
         # Calculate distances to available goals using correct variable names
@@ -420,6 +385,9 @@ class ConvoyPathFollowingEnv(gym.Env):
         # Check if any minor goal is reached
         if len(available_distances) > 0 and np.any(available_distances < self.goal_threshold):
             closest_goal_index = np.argmin(available_distances)
+            # self.current_goal_index = closest_goal_index + self.current_goal_index + 1
+            # reached_subgoal_index = (self.current_goal_index + 1) + closest_goal_index * self.goal_step
+            # self.current_goal_index = reached_subgoal_index + self.goal_step
             self.current_goal_index = (self.current_goal_index + 1) + (closest_goal_index + 1) * self.goal_step
             # self.current_goal_index = (self.current_goal_index + 1) + closest_goal_index * self.goal_step # Dranaju fixed version
             if self.current_goal_index < len(self.path):
@@ -433,27 +401,22 @@ class ConvoyPathFollowingEnv(gym.Env):
     
     def _is_terminated(self):
         '''
-        @brief: Check if the agent is in the goal.
+        Check if the agent is in the goal.
         '''
         if self._get_distance(self.current_position, self.path[-1]) < self.goal_threshold:
             self.is_terminated = True
             return
         self.is_terminated = False
     
-    def _get_distance(self, 
-                      p1 : np.ndarray, 
-                      p2: np.ndarray):
+    def _get_distance(self, p1 : np.ndarray, p2: np.ndarray):
         '''
-        @brief: Calculate the distance between two points.
-
-        @param p1: The first point.
-        @param p2: The second point.
+        Calculate the distance between two points.
         '''
         return np.linalg.norm(p1 - p2)
     
     def _is_truncated(self) -> bool:
         '''
-        @brief: Verify if the episode is done.
+        Verify if the episode is done.
         '''
         timeout = self.tick >= self.max_tick
         out_of_bound = self.current_goal_distance > self.out_of_bound_threshold
@@ -469,14 +432,12 @@ class ConvoyPathFollowingEnv(gym.Env):
         path = self._create_path(path_type)
         return path
 
-    def _create_path(self, 
-                     path_type: str = 'straight') -> np.ndarray:
+    def _create_path(self, path_type: str = 'straight') -> np.ndarray:
         '''
-        @brief: Create path for the agent to follow.
-
-        @param path_type: The type of path to create.
+        Create path for the agent to follow.
         '''
-        random_path_size = np.random.randint(50, 100)
+        # Ensure at least 2 points in the path to avoid randint(0, high<=0) errors
+        random_path_size = np.random.randint(2, 40)
 
         if path_type == 'straight':
             y_point = np.random.uniform(-2.5, 2.5)
@@ -495,7 +456,7 @@ class ConvoyPathFollowingEnv(gym.Env):
     
     def _get_angle_error(self) -> None:
         '''
-        @brief: Calculate the angle error between the agent and the goal.
+        Calculate the angle error between the agent and the goal.
         '''
         angle_to_goal = np.arctan2(
             self.current_goal_position[1] - self.current_position[1],
@@ -507,6 +468,52 @@ class ConvoyPathFollowingEnv(gym.Env):
     
     def _generate_goals_window(self) -> None:
         '''
-        @brief: Generate a window of goals for the agent to follow.
+        Generate a window of goals for the agent to follow.
         '''
         self.current_goals_window_position = self.path[self.current_goal_index + 1:self.current_goal_index + self.num_goals_window: self.goal_step]
+
+    def _generate_obstacle(self) -> None:
+        '''
+        Generate an obstacle in the environment.
+
+        TODO: Make it works for different shapes
+        '''
+        # If path is too short or empty, do not place an obstacle
+        if self.path is None or len(self.path) < 2:
+            self.obstacle = None
+            return
+
+        # Get a random position on the path for the obstacle
+        obstacle_index = np.random.randint(0, len(self.path) - 1)
+        obstacle_position = self.path[obstacle_index]
+        obstacle_size = np.random.uniform(0.1, 1.0)
+
+        # Create an obstacle at the position
+        self.obstacle = {
+            'position': obstacle_position,
+            'size': obstacle_size
+        }
+    
+    def _check_obstacle_collision(self) -> None:
+        '''
+        Check if the agent collides with the obstacle using simple distance calculation.
+        '''
+        if self.obstacle is None:
+            self.obstacle_collision = False
+            return
+        
+        # Get positions
+        agent_pos = self.current_position
+        obstacle_pos = np.array(self.obstacle['position'])
+        
+        # Calculate distance between centers
+        distance = self._get_distance(agent_pos, obstacle_pos)
+        
+        # Calculate collision threshold (sum of radii)
+        obstacle_radius = self.obstacle['size'] / 2  # Assuming size is diameter
+        collision_threshold = self.agent_footprint_radius + obstacle_radius
+        
+        # Check collision
+        self.obstacle_collision = distance < collision_threshold
+
+

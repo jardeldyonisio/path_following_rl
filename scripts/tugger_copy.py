@@ -9,17 +9,9 @@ de um comboio logístico.
 import numpy as np
 
 
-def transform_coords(pos_x: float, 
-                     pos_y: float, 
-                     angle: float, 
-                     coords: np.ndarray) -> np.ndarray:
+def transform_coords(pos_x, pos_y, angle, coords):
     '''
-    @brief: Relative position to global coordinates
-
-    @param pos_x: Posição x do objeto
-    @param pos_y: Posição y do objeto
-    @param angle: Ângulo de rotação do objeto
-    @param coords: Coordenadas a serem transformadas
+    Calcula a rotação e translação no espaço 2D
     '''
     rot_matrix = np.array([[np.cos(angle), -np.sin(angle)],
                            [np.sin(angle), np.cos(angle)]])
@@ -28,11 +20,7 @@ def transform_coords(pos_x: float,
     return coords.T
 
 
-def get_rect_coords(pos_x: float, 
-                    pos_y: float, 
-                    width: float, 
-                    height: float, 
-                    angle: float) -> np.ndarray:
+def get_rect_coords(pos_x, pos_y, width, height, angle):
     '''
     Retorna as coordenadas dos quatro cantos do retângulo no
     espaço 2D no formato NumPy array. Retorna uma matrix
@@ -46,10 +34,7 @@ def get_rect_coords(pos_x: float,
                        [-width/2.0, -height/2.0]])
 
     # Calcula a rotação e translação no espaço 2D
-    coords = transform_coords(pos_x, 
-                              pos_y, 
-                              angle, 
-                              coords)
+    coords = transform_coords(pos_x, pos_y, angle, coords)
 
     # No momento de retornar o resultado,
     # se desfaz a transposição
@@ -102,21 +87,10 @@ def coords2pygame(coords, window_width, window_height,
     return coords
 
 
-def pygame2coords(coords, 
-                  window_width, 
-                  window_height,
-                  centerx, 
-                  centery, 
-                  scale):
+def pygame2coords(coords, window_width, window_height,
+                  centerx, centery, scale):
     '''
-    @brief: Transform pygame coordinates to simulation coordinates (world space)
-
-    @param coords: Coordenadas no espaço do pygame
-    @param window_width: Largura da janela do pygame
-    @param window_height: Altura da janela do pygame
-    @param centerx: Coordenada x do centro da janela
-    @param centery: Coordenada y do centro da janela
-    @param scale: Fator de escala
+    Transforma as coordenadas do pygame para simulação
     '''
 
     # Ajusta formado do array de coordenadas
@@ -167,10 +141,10 @@ class Cart:
 
     def get_tug_coord(self):
         '''
-        Retorna as coordenadas do ponto de contato do rebocador (frente = +X)
+        Retorna as coordenadas do ponto de contato do rebocador
         '''
-        tug_x = self.x - self.back_drawbar * np.cos(self.angle)
-        tug_y = self.y - self.back_drawbar * np.sin(self.angle)
+        tug_x = self.x + self.back_drawbar * np.sin(self.angle)
+        tug_y = self.y - self.back_drawbar * np.cos(self.angle)
         return tug_x, tug_y
 
     def set_tugged_by(self, tugger):
@@ -191,28 +165,17 @@ class Cart:
 
     def update_tugs(self):
         '''
-        Atualiza a posição de todos elementos do comboio (frente = +X)
+        Atualiza a posição de todos elementos do comboio
+        que vêm após este, chamando a função recursivamente.
         '''
         if self.tugger is not None:
             xt, yt = self.tugger.get_tug_coord()
-            # Calcula o ângulo do reboque para alinhar com o ponto de conexão
-            dx = self.x - xt
-            dy = self.y - yt
-            if abs(dx) > 0.001 or abs(dy) > 0.001:
-                # Agora, frente = +X, então arctan2(dy, dx)
-                self.angle = np.arctan2(dy, dx)
-            # Calcula o steer_angle normalmente (ajuste geométrico)
-            # Posição do eixo dianteiro
-            front_x = self.x + self.wheelbase * np.cos(self.angle)
-            front_y = self.y + self.wheelbase * np.sin(self.angle)
-            # Vetor do cambão dianteiro
-            bar_dx = front_x - xt
-            bar_dy = front_y - yt
-            front_bar_angle = np.arctan2(bar_dy, bar_dx)
-            self.steer_angle = (front_bar_angle - self.angle + np.pi) % (2 * np.pi) - np.pi
-            # Ajusta a posição do reboque para garantir conexão perfeita
-            self.x = xt + self.back_drawbar * np.cos(self.angle)
-            self.y = yt + self.back_drawbar * np.sin(self.angle)
+            self.x = xt + self.front_drawbar \
+                * np.sin(self.angle + self.steer_angle) \
+                + self.wheelbase * np.sin(self.angle)
+            self.y = yt - self.front_drawbar \
+                * np.cos(self.angle + self.steer_angle) \
+                - self.wheelbase * np.cos(self.angle)
         if self.next_cart is not None:
             self.next_cart.update_tugs()
 
@@ -275,16 +238,16 @@ class Cart:
                     np.array([[x2, y2], [x3, y3]])]
         circles = [np.array([[x0, y0], [x3, y3]])]
 
-        # Rotação extra para alinhar visualização com cinemática (+X = frente)
-        vis_angle = self.angle - np.pi/2
-        xc = self.x + (self.wheelbase/2.0) * np.cos(self.angle)
-        yc = self.y + (self.wheelbase/2.0) * np.sin(self.angle)
+        # Coordenadas do centro do reboque
+        xc = self.x - (self.wheelbase/2.0) * np.sin(self.angle)
+        yc = self.y + (self.wheelbase/2.0) * np.cos(self.angle)
 
+        # All polygons
         polys = tyres + axis + drawbars + body
         for i, poly in enumerate(polys):
-            polys[i] = transform_coords(xc, yc, vis_angle, poly)
+            polys[i] = transform_coords(xc, yc, self.angle, poly)
         for i, circle in enumerate(circles):
-            circles[i] = transform_coords(xc, yc, vis_angle, circle)
+            circles[i] = transform_coords(xc, yc, self.angle, circle)
 
         return polys, circles
 
@@ -297,36 +260,33 @@ class Tractor:
     x = 0.0
     y = 0.0
     angle = 0.0
+    steer_angle = 0.0
 
     # Fixed parameters
-    wheel_radius = 0.0775
-    wheel_height = 0.055
-    wheel_separation = 0.41
-    base_len = 0.5
-    base_width = 0.335
-    base_height = 0.235
-    back_drawbar = 0.5
+    tyre_radius = 0.288
+    tyre_width = 0.167
+    wheelbase = 1.2
+    width = 1.0
+    back_drawbar = 1.0
     next_cart = None
+    max_vel = 40.0
+    max_steer_vel = 100.0
 
-    def __init__(self, 
-                 x: float = 0.0, 
-                 y: float = 0.0, 
-                 angle: float = 0.0):
+    def __init__(self, x=0.0, y=0.0, steer_angle=0.0, angle=0.0):
         '''
         Inicializa variáveis dinâmicas
         '''
         self.angle = angle
+        self.steer_angle = steer_angle
         self.x = x
         self.y = y
 
-    def set_state(self, 
-                  x: float, 
-                  y: float, 
-                  angle: float): # angle = np.
+    def set_state(self, x, y, steer_angle, angle):
         '''
-        @brief: Define the state of the tractor.
+        Atualiza variáveis dinâmicas
         '''
         self.angle = angle
+        self.steer_angle = steer_angle
         self.x = x
         self.y = y
 
@@ -335,10 +295,10 @@ class Tractor:
 
     def get_tug_coord(self):
         '''
-        Retorna as coordenadas da junta de conexão do reboque (frente = +X)
+        Retorna as coordenadas da junta de conexão do reboque
         '''
-        tug_x = self.x - self.back_drawbar * np.cos(self.angle)
-        tug_y = self.y - self.back_drawbar * np.sin(self.angle)
+        tug_x = self.x + self.back_drawbar * np.sin(self.angle)
+        tug_y = self.y - self.back_drawbar * np.cos(self.angle)
         return tug_x, tug_y
 
     def set_next_cart(self, cart):
@@ -359,50 +319,43 @@ class Tractor:
 
     def get_geometries(self):
         '''
-        @brief: Return the closed polygons and circles to be drawn.
+        Retorna os polígonos fechados e círculos que serão desenhados.
         '''
 
-        # Compute the coords to represent the tyres from bottom view
-        tyres = [get_rect_coords(-self.wheel_separation/2.0, 
-                                 0.0,
-                                 self.wheel_height, # Wrong place but work better here
-                                 self.wheel_radius, # Wrong place but work better here
-                                 0.0),
-                 get_rect_coords(+self.wheel_separation/2.0, 
-                                 0.0,
-                                 self.wheel_height, # Wrong place but work better here
-                                 self.wheel_radius, # Wrong place but work better here
-                                 0.0)]
-        
-        # Fix the body. The center of the rectangle shoud be on 
-        body = [get_rect_coords(0.0,
-                                0.0,
-                                self.base_width,
-                                self.base_len,
-                                0.0)]
-        
-        # rear_tyres
+        # Computa as coordenadas dos retângulos que vão representar as
+        # três rodas vistas de cima.
+        tyres = [get_rect_coords(0.0, self.wheelbase/2.0,
+                                 self.tyre_width, self.tyre_radius*2.0,
+                                 self.steer_angle),
+                 get_rect_coords(-self.width/2.0, -self.wheelbase/2.0,
+                                 self.tyre_width, self.tyre_radius*2.0, 0.0),
+                 get_rect_coords(+self.width/2.0, -self.wheelbase/2.0,
+                                 self.tyre_width, self.tyre_radius*2.0, 0.0)]
 
-        # TODO: Add some marker on tyres to be easier to visualize their moves
+        # Rear, and longitudinal axes
+        axis = [np.array([[-self.width/2.0, -self.wheelbase/2.0],
+                          [+self.width/2.0, -self.wheelbase/2.0]]),
+                np.array([[0.0, +self.wheelbase/2.0],
+                          [0.0, -self.wheelbase/2.0]])]
 
         # Drawbars
         x2 = 0.0
-        y2 = 0.0
+        y2 = -self.wheelbase/2.0
         x3 = 0.0
-        y3 = y2 - self.back_drawbar
+        y3 = y2-self.back_drawbar
         drawbars = [np.array([[x2, y2], [x3, y3]])]
         circles = [np.array([[x3, y3]])]
 
-        # Rotação extra para alinhar visualização com cinemática (+X = frente)
-        vis_angle = self.angle - np.pi/2
-        xc = self.x
-        yc = self.y
+        # Coordenadas do centro do trator
+        xc = self.x - (self.wheelbase/2.0) * np.sin(self.angle)
+        yc = self.y + (self.wheelbase/2.0) * np.cos(self.angle)
 
-        polys = tyres + body + drawbars
+        # All polygons
+        polys = tyres + axis + drawbars
         for i, poly in enumerate(polys):
-            polys[i] = transform_coords(xc, yc, vis_angle, poly)
+            polys[i] = transform_coords(xc, yc, self.angle, poly)
         for i, circle in enumerate(circles):
-            circles[i] = transform_coords(xc, yc, vis_angle, circle)
+            circles[i] = transform_coords(xc, yc, self.angle, circle)
         return polys, circles
 
 
@@ -423,6 +376,16 @@ class Train:
     # Goal
     x_goal = 0.0
     y_goal = 0.0
+
+    # Ganhos do controlador PD
+    #kp1 = 0.1
+    #kv1 = 0.1
+    #kp2 = 1.0
+    #kv2 = 0.05
+    kp1 = 1000.0
+    kv1 = 100.0
+    kp2 = 10.0
+    kv2 = 0.5
 
     # Parâmetros dos reboques
     cart_wheelbase = 1.5
@@ -467,8 +430,9 @@ class Train:
 
         # Laço para criar n reboques
         for _ in range(self.n):
-            # Cria um reboque alinhado com o trator
-            cart = Cart(x, y, angle=self.tractor.angle)
+
+            # Cria um reboque
+            cart = Cart(x, y)
 
             # Ajusta os parâmetros do reboque
             cart.wheelbase = self.cart_wheelbase
@@ -495,18 +459,72 @@ class Train:
         if len(self.train) > 0:
             self.train[0].update_tugs()
 
+    def update_goal(self, y, x, dt=0.01):
+        '''
+        Atualiza o alvo para onde o comboio deve
+        tentar seguir
+        '''
+        # Atualiza o objetivo
+        self.x_goal = x
+        self.y_goal = y
+
+        # Calcula o erro Cartesiano
+        #tractor_x, tractor_y = self.tractor.get_tug_coord()
+        #x_err = self.x_goal - tractor_y
+        #y_err = self.y_goal - tractor_x
+        x_err = self.x_goal - self.tractor.y
+        y_err = self.y_goal - self.tractor.x
+
+        # Calcula o erro polar
+        d_err_new = np.sqrt(x_err**2 + y_err**2)
+        angle_err_new = np.arctan2(-y_err, x_err) \
+            - self.tractor.angle - self.tractor.steer_angle
+
+        # TODO: Preciso disso?
+        # if d_err_new < 0.02:
+        #    d_err_new = 0.0
+        #    angle_err_new = 0.0
+
+        # Calcula as derivadas
+        self.d_err_dot = (d_err_new - self.d_err) / dt
+        self.angle_err_dot = (angle_err_new - self.angle_err) / dt
+
+        # Atualiza os erros polares
+        self.d_err = d_err_new
+        self.angle_err = angle_err_new
+
+    def get_control_for_goal(self, y, x, dt=0.01):
+        '''
+        Retorna as entradas de controle de acordo
+        com um controlador PD
+        '''
+        # Update the goal and respective errors
+        self.update_goal(y, x, dt)
+        # Eq 14
+        u1 = min(self.kp1*self.d_err + self.kv1*self.d_err_dot,
+                 self.tractor.max_vel / self.tractor.tyre_radius)
+        u2 = max(min(self.kp2*self.angle_err + self.kv2*self.angle_err_dot,
+                     self.tractor.max_steer_vel), -self.tractor.max_steer_vel)
+        u = np.array([u1, u2]).T
+        return u
+
     def get_state(self):
         '''
         Retorna o vetor de estados q
         '''
         if len(self.train) > 0:
-            q = [self.tractor.x, 
-                 self.tractor.y, 
-                 self.tractor.angle]
+            q = [self.tractor.x, self.tractor.y,
+                 self.tractor.steer_angle, self.tractor.angle]
             for cart in self.train[1:]:
                 q += [cart.angle+cart.steer_angle, cart.angle]
         q = np.array(q).T
         return q
+
+    def get_steer_angle(self):
+        '''
+        Retorna o esterçamento do trator
+        '''
+        return self.train[0].steer_angle
 
     def get_coord(self):
         '''
@@ -523,19 +541,20 @@ class Train:
         # Ajusta o estado do trator
         if len(self.train) > 0:
             tractor = self.train[0]
-            x, y, angle = q[:3]
-            tractor.set_state(x, y, angle)
+            x, y, steer_angle, angle = q[:4]
+            tractor.set_state(x, y, steer_angle, angle)
             # Ajusta o estado de cada reboque
             for i, cart in enumerate(self.train[1:]):
-                cart.angle = q[3 + 2*i + 1]
-                cart.steer_angle = q[3 + 2*i] - cart.angle
+                cart.angle = q[4 + 2*i + 1]
+                cart.steer_angle = q[4 + 2*i] - cart.angle
         # Atualiza posições
         self.update_tugs()
 
     def get_jacobian(self):
         '''
-        @brief: Return the Jacobian matrix of the system.
-        Reference: https://doi.org/10.2507/IJSIMM20-2-550
+        Retorna o Jacobiano do sistema. Aqui
+        eu segui o artigo https://doi.org/10.2507/IJSIMM20-2-550
+        Foram feitos apenas alguns pequenos ajustes.
         '''
 
         # Iniciamos com uma lista, pois fica mais simples
@@ -550,25 +569,30 @@ class Train:
             # semelhantes aos nomes usados no artigo
             tractor = self.train[0]
             beta_0 = tractor.angle
+            alpha_0s = tractor.steer_angle
+            h_0 = tractor.wheelbase
+            r_0f = tractor.tyre_radius
             d_0 = tractor.back_drawbar
 
             # Eq 4
-            f_l0 = np.cos(beta_0)
+            f_l0 = r_0f * np.cos(alpha_0s)
 
             # Eq 5
-            f_a0 = np.sin(beta_0)
+            f_a0 = (r_0f / h_0) * np.sin(alpha_0s)
 
             # Eq 6 (primeiros 4 elementos)
-            J += [[f_l0, 0.0],
-                  [f_a0, 0.0],
-                  [0.0, 1.0]]
+            J += [[-f_l0*np.sin(beta_0), 0.0],
+                  [f_l0*np.cos(beta_0), 0.0],
+                  [0.0, 1.0],
+                  [f_a0, 0.0]]
 
-            # Carts kinematics
-            f_ai2 = None
-            f_li2 = None 
+            # Agora vamos para os reboques
+            f_ai2 = None  # Essa variável será definida depois
+            f_li2 = None  # Essa variável será definida depois
             for i in range(self.n):
-                # The current trailer is i+1 because i=0 is the tractor,
-                # and i=1 is the first trailer
+                # Reboque atual é i+1 (pois i=0 é o trator,
+                # e n é o número de reboques, ou seja,
+                # temos um total de n+1 elementos)
                 c_now = self.train[i+1]
 
                 # Esse é o ângulo absoluto do esterçamento
