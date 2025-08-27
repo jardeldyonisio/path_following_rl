@@ -136,15 +136,10 @@ class ConvoyPathFollowingEnv(gym.Env):
         # TODO: Randomize the number of cars in the train
         self.train = Train(n=1)
         
-        # Set the initial position and orientation for tractor
-        # Note: tugger geometry has front wheel in +Y direction, but convoy uses +X for forward
-        # So we need to subtract π/2 to align the tugger's front with the movement direction
-        tugger_angle = self.agent_yaw - np.pi/2
-        
         # Set tractor state - tugger.py will handle trailer positioning automatically
         self.train.tractor.set_state(self.current_position[0], 
                                     self.current_position[1], 
-                                    tugger_angle)
+                                    self.agent_yaw)
         
         self.is_subgoal_reached: bool = False
         self.goal_reached_counter: int = 0
