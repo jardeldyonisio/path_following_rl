@@ -196,12 +196,37 @@ class Cart:
         '''
         if self.tugger is not None:
             xt, yt = self.tugger.get_tug_coord()
-            self.x = xt + self.front_drawbar \
-                * np.sin(self.angle + self.steer_angle) \
-                + self.wheelbase * np.sin(self.angle)
-            self.y = yt - self.front_drawbar \
-                * np.cos(self.angle + self.steer_angle) \
-                - self.wheelbase * np.cos(self.angle)
+            
+            # Para robô diferencial, apenas calculamos o steer_angle correto
+            # baseado na posição atual e na cinemática inversa
+            
+            # Diferença entre a posição atual e o ponto de reboque
+            dx = self.x - xt
+            dy = self.y - yt
+            
+            if abs(dx) > 0.001 or abs(dy) > 0.001:  # Only calculate if significant separation
+                # Da equação cinemática:
+                # x = xt + front_drawbar * sin(angle + steer_angle) + wheelbase * sin(angle)
+                # y = yt - front_drawbar * cos(angle + steer_angle) - wheelbase * cos(angle)
+                
+                # Isolando a componente da barra frontal:
+                # dx - wheelbase * sin(angle) = front_drawbar * sin(angle + steer_angle)
+                # dy + wheelbase * cos(angle) = -front_drawbar * cos(angle + steer_angle)
+                
+                front_x = dx - self.wheelbase * np.sin(self.angle)
+                front_y = dy + self.wheelbase * np.cos(self.angle)
+                
+                # Agora calculamos o ângulo da barra frontal
+                front_bar_angle = np.arctan2(front_x, -front_y)
+                
+                # O steer_angle é a diferença
+                self.steer_angle = front_bar_angle - self.angle
+                
+                # Normalizar o ângulo para [-pi, pi]
+                self.steer_angle = (self.steer_angle + np.pi) % (2 * np.pi) - np.pi
+            
+            # NÃO recalcular a posição - ela já é definida pelo convoy.py
+            
         if self.next_cart is not None:
             self.next_cart.update_tugs()
 
@@ -286,7 +311,6 @@ class Tractor:
     x = 0.0
     y = 0.0
     angle = 0.0
-    steer_angle = 0.0
 
     # Fixed parameters
     wheel_radius = 0.0775
@@ -298,12 +322,14 @@ class Tractor:
     back_drawbar = 0.5
     next_cart = None
 
-    def __init__(self, x=0.0, y=0.0, steer_angle=0.0, angle=0.0):
+    def __init__(self, 
+                 x: float = 0.0, 
+                 y: float = 0.0, 
+                 angle: float = 0.0):
         '''
         Inicializa variáveis dinâmicas
         '''
         self.angle = angle
-        self.steer_angle = steer_angle
         self.x = x
         self.y = y
 
@@ -489,18 +515,13 @@ class Train:
         Retorna o vetor de estados q
         '''
         if len(self.train) > 0:
-            q = [self.tractor.x, self.tractor.y,
-                 self.tractor.steer_angle, self.tractor.angle]
+            q = [self.tractor.x, 
+                 self.tractor.y, 
+                 self.tractor.angle]
             for cart in self.train[1:]:
                 q += [cart.angle+cart.steer_angle, cart.angle]
         q = np.array(q).T
         return q
-
-    def get_steer_angle(self):
-        '''
-        Retorna o esterçamento do trator
-        '''
-        return self.train[0].steer_angle
 
     def get_coord(self):
         '''
