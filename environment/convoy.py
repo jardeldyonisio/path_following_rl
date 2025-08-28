@@ -138,8 +138,8 @@ class ConvoyPathFollowingEnv(gym.Env):
         
         # Set tractor state - tugger.py will handle trailer positioning automatically
         self.train.tractor.set_state(self.current_position[0], 
-                                    self.current_position[1], 
-                                    self.agent_yaw)
+                                     self.current_position[1], 
+                                     self.agent_yaw)
         
         self.is_subgoal_reached: bool = False
         self.goal_reached_counter: int = 0
@@ -305,8 +305,8 @@ class ConvoyPathFollowingEnv(gym.Env):
         
         # Agora frente = +X, basta passar self.agent_yaw
         self.train.tractor.set_state(self.current_position[0], 
-                        self.current_position[1], 
-                        self.agent_yaw)
+                                     self.current_position[1], 
+                                     self.agent_yaw)
         
         # Update trailer positions based on tractor movement
         # First, calculate proper trailer angles BEFORE updating positions
