@@ -146,17 +146,21 @@ class Cart:
     steer_angle = 0.0
 
     # Fixed parameters
-    tyre_radius = 0.288
+    tyre_radius = 0.0775
     tyre_width = 0.167
-    wheelbase = 1.5 # Não encontrei o que altera
-    width = 1.0
-    front_drawbar = 1.0 # Não encontrei o que altera
-    back_drawbar = 5 # Não encontrei o que altera
+    wheelbase = 1.0 # Não encontrei o que altera
+    width = 0.5
+    front_drawbar = 0.5 # Não encontrei o que altera
+    back_drawbar = 0.5 # Não encontrei o que altera
     margin = 0.12
     tugger = None
     next_cart = None
 
-    def __init__(self, x=0.0, y=0.0, angle=0.0, steer_angle=0.0):
+    def __init__(self, 
+                 x: float = 0.0, 
+                 y: float = 0.0, 
+                 angle: float = 0.0, 
+                 steer_angle: float = 0.0):
         '''
         Inicializa variáveis dinâmicas
         '''
@@ -420,21 +424,17 @@ class Train:
     x = 0.0
     y = 0.0
 
-    # Goal
-    x_goal = 0.0
-    y_goal = 0.0
-
     # Parâmetros dos reboques
-    cart_wheelbase = 1.5
-    cart_front_drawbar = 1.0
+    cart_wheelbase = 1.0
+    cart_front_drawbar = 0.5
     cart_back_drawbar = 0.5
 
     tractor = None
 
-    def __init__(self, n=4):
+    def __init__(self, 
+                 n: int = 4):
         '''
-        Inicializa um comboio com um trem e n reboques,
-        total de n+1 elementos.
+        @brief: Initialize a train with a tractor and n trailers.
         '''
         # Inicializa as coordenadas na
         # posição do trator
@@ -468,7 +468,7 @@ class Train:
         # Laço para criar n reboques
         for _ in range(self.n):
             # Cria um reboque alinhado com o trator
-            cart = Cart(x, y, angle=self.tractor.angle)
+            cart = Cart(x, y)
 
             # Ajusta os parâmetros do reboque
             cart.wheelbase = self.cart_wheelbase
@@ -515,7 +515,8 @@ class Train:
         '''
         return self.train[0].get_tug_coord()
 
-    def set_state(self, q):
+    def set_state(self, 
+                  q):
         '''
         Seta o vetor de estados q
         '''
