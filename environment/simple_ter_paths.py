@@ -71,18 +71,23 @@ class SimpleTerPathFollowingEnv(gym.Env):
         '''Lê todos os arquivos .txt da pasta e retorna lista de np.arrays'''
         import os
         paths = []
+        print(f"Lendo arquivos de path em: {folder_path}")
         for fname in os.listdir(folder_path):
             if fname.endswith('.txt'):
                 fpath = os.path.join(folder_path, fname)
+                print(f"Arquivo encontrado: {fpath}")
                 with open(fpath, 'r') as f:
                     pts = []
                     for line in f:
-                        vals = line.strip().split()
+                        vals = line.strip().split(',')
                         if len(vals) == 2:
                             x, y = map(float, vals)
                             pts.append([x, y])
                     if pts:
+                        print(f"Primeiros pontos do arquivo {fname}: {pts[:5]}")
+                        print(f"Total de pontos lidos: {len(pts)}")
                         paths.append(np.array(pts))
+        print(f"Total de arquivos lidos: {len(paths)}")
         return paths
         
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
@@ -293,14 +298,11 @@ class SimpleTerPathFollowingEnv(gym.Env):
         '''
 
         self.current_goal_distance = self._goal_distance()
-        print(f"[DEBUG] current_goal_distance: {self.current_goal_distance}, threshold: {self.goal_threshold}, current_goal_index: {self.current_goal_index}, path_len: {len(self.path)}")
 
         if self.current_goal_distance < self.goal_threshold:
-            print(f"[DEBUG] Goal consumido! Index antes: {self.current_goal_index}")
             if self.current_goal_index >= len(self.path) - 1:
                 # Último objetivo atingido, termina episódio
                 self.current_goal_position = self.path[-1]
-                print(f"[DEBUG] Último objetivo atingido! Episódio terminado.")
                 self.is_goal_reached = True
                 self.is_terminated = True
                 # Remove o objetivo para garantir que não será mais considerado
@@ -311,14 +313,11 @@ class SimpleTerPathFollowingEnv(gym.Env):
                 self.current_goal_index += self.goal_step
                 self.goal_reached_counter += 1
                 self.current_goal_position = self.path[self.current_goal_index]
-                print(f"[DEBUG] Novo objetivo: {self.current_goal_position}")
                 self._generate_goals_window()
                 self.is_goal_reached = True
-                print(f"[DEBUG] is_goal_reached: {self.is_goal_reached}")
                 return
         self._update_subgoal()
         self.is_goal_reached = False
-        print(f"[DEBUG] is_goal_reached: {self.is_goal_reached}")
     
     def _update_subgoal(self):
         '''
