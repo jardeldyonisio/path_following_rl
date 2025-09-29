@@ -13,31 +13,32 @@ This class implements a single-agent environment for path following.
 
 class SimpleTerPathFollowingEnv(gym.Env):
 
-    def __init__(self, path_mode: str = "ficticio", paths_folder: str = "../paths"):
+    def __init__(self, path_mode: str = "ficticio", paths_folder: str = "../paths", selected_path_name: str = None):
         '''
         path_mode: "real", "ficticio" ou "ambos"
         paths_folder: pasta onde estão os arquivos de caminho real
+        selected_path_name: nome do arquivo de path desejado (ex: "path_circular.txt")
         '''
         super().__init__()
-        self.max_tick: int = 800
-        self.goal_step: int = 1
-        self.num_goals_window: int = 15
-        self.out_of_bound_threshold: int = (self.goal_step * self.num_goals_window) + self.goal_step
-        self.goal_threshold: float = 0.2
+        self.max_tick = 800
+        self.goal_step = 1
+        self.num_goals_window = 15
+        self.out_of_bound_threshold = (self.goal_step * self.num_goals_window) + self.goal_step
+        self.goal_threshold = 0.2
 
-        self.min_linear_velocity: float = 0.01
-        self.max_linear_velocity: float = 0.25
+        self.min_linear_velocity = 0.01
+        self.max_linear_velocity = 0.25
 
-        self.min_angular_velocity: float = -0.5
-        self.max_angular_velocity: float = 0.5
+        self.min_angular_velocity = -0.5
+        self.max_angular_velocity = 0.5
 
-        self.min_goal_distance: float = 0.0
-        self.max_goal_distance: float = self.out_of_bound_threshold
+        self.min_goal_distance = 0.0
+        self.max_goal_distance = self.out_of_bound_threshold
 
-        self.min_yaw_error: float = -np.pi * 2
-        self.max_yaw_error: float = np.pi * 2
+        self.min_yaw_error = -np.pi * 2
+        self.max_yaw_error = np.pi * 2
 
-        self.terminated_counter: int = 1
+        self.terminated_counter = 1
 
         self.action_space = gym.spaces.Box(
             low=np.array([-1.0, -1.0]),
@@ -66,13 +67,15 @@ class SimpleTerPathFollowingEnv(gym.Env):
 
         self.path_mode = path_mode
         self.paths_folder = paths_folder
-        self.real_paths = self._load_real_paths(self.paths_folder)
+        self.selected_path_name = selected_path_name
+        self.real_paths, self.real_paths_names = self._load_real_paths_with_names(self.paths_folder)
         self.path = self._switch_path()
 
-    def _load_real_paths(self, folder_path):
-        '''Lê todos os arquivos .txt da pasta e retorna lista de np.arrays'''
+    def _load_real_paths_with_names(self, folder_path):
+        '''Lê todos os arquivos .txt da pasta e retorna lista de np.arrays e lista de nomes'''
         import os
         paths = []
+        names = []
         print(f"Lendo arquivos de path em: {folder_path}")
         for fname in os.listdir(folder_path):
             if fname.endswith('.txt'):
@@ -81,44 +84,39 @@ class SimpleTerPathFollowingEnv(gym.Env):
                 with open(fpath, 'r') as f:
                     pts = []
                     for line in f:
-                        vals = line.strip().split(',')
+                        line = line.strip()
+                        if not line:
+                            continue
+                        # Aceita separador vírgula ou espaço
+                        if ',' in line:
+                            vals = line.split(',')
+                        else:
+                            vals = line.split()
                         if len(vals) == 2:
-                            x, y = map(float, vals)
-                            pts.append([x, y])
+                            try:
+                                pts.append([float(vals[0]), float(vals[1])])
+                            except ValueError:
+                                print(f"[WARN] Linha ignorada no arquivo {fname}: {line}")
                     if pts:
-                        print(f"Primeiros pontos do arquivo {fname}: {pts[:5]}")
-                        print(f"Total de pontos lidos: {len(pts)}")
                         paths.append(np.array(pts))
-        print(f"Total de arquivos lidos: {len(paths)}")
-        return paths
-        
-    def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
+                        names.append(fname)
+        return paths, names
+    def reset(self, seed: Optional[int] = None):
+        # Print explícito do path selecionado
+        if self.selected_path_name is not None and self.real_paths:
+            for i, name in enumerate(self.real_paths_names):
+                if (self.selected_path_name == name or self.selected_path_name + ".txt" == name) and np.array_equal(self.path, self.real_paths[i]):
+                    print(f"[INFO] Path executado: {name}")
+                    break
+        elif hasattr(self, 'path') and isinstance(self.path, np.ndarray):
+            print(f"[INFO] Path executado: Fictício ({'straight' if np.all(self.path[:,1]==self.path[0,1]) else 'custom'})")
         '''
         Reset the environment to the initial state.
         '''
-        super().reset(seed=seed)
-
         if seed is not None:
             np.random.seed(seed)
 
         self.path = self._switch_path()
-
-        self.agent_yaw : float = 0.0
-        self.desired_yaw_angle: float = 0.0
-        self.tick : int = 0
-        self.linear_velocity : float = self.min_linear_velocity
-        self.yaw_angle_error : float = 0.0
-        self.angular_velocity : float = 0.0
-        self.current_goal_index : int = 0
-        self.current_goal_distance : float = 0.0
-        self.current_position : np.ndarray = np.array([-0.3, 0.0])
-        self.is_subgoal_reached: bool = False
-        self.goal_reached_counter: int = 0
-        self.subgoal_reacher_counter: int = 0
-        self.is_goal_reached: bool = False
-        self.is_terminated: bool = False
-        self.is_truncated: bool = False
-        self.distances = np.zeros(self.num_goals_window)
 
         # Filtragem dos goals para paths reais
         if self.path_mode == "real" or (self.path_mode == "ambos" and self.path in self.real_paths):
@@ -126,15 +124,33 @@ class SimpleTerPathFollowingEnv(gym.Env):
         else:
             self.filtered_goals = self.path
 
-        self.current_goal_position : float = self.filtered_goals[0]
-        self.current_goal_index : int = 0
+        self.agent_yaw = 0.0
+        self.desired_yaw_angle = 0.0
+        self.tick = 0
+        self.linear_velocity = self.min_linear_velocity
+        self.yaw_angle_error = 0.0
+        self.angular_velocity = 0.0
+        self.current_goal_index = 0
+        self.current_goal_distance = 0.0
+        self.current_position = np.array([-0.3, 0.0])
+        self.is_subgoal_reached = False
+        self.goal_reached_counter = 0
+        self.subgoal_reacher_counter = 0
+        self.is_goal_reached = False
+        self.is_terminated = False
+        self.is_truncated = False
+        self.distances = np.zeros(self.num_goals_window)
+
+        self.current_goal_position = self.filtered_goals[0]
         self.current_goals_window_position = self.filtered_goals[1:1+self.num_goals_window]
+
+        print(f"RESET: Path selecionado tem {len(self.path)} pontos.")
+        print(f"RESET: Path filtrado tem {len(self.filtered_goals)} goals.")
+        print(f"RESET: Primeiro goal: {self.current_goal_position}, Último goal: {self.filtered_goals[-1]}")
 
         observation = self._get_obs()
         info = self._get_info()
-
         return observation
-        # return observation, info
 
     def step(self, action):
         '''
@@ -312,7 +328,6 @@ class SimpleTerPathFollowingEnv(gym.Env):
         '''
         Check if the goal is reached and update if in this case.
         '''
-
         self.current_goal_distance = self._goal_distance()
 
         goals = self.filtered_goals if hasattr(self, 'filtered_goals') else self.path
@@ -388,7 +403,19 @@ class SimpleTerPathFollowingEnv(gym.Env):
         '''
         Check if the agent is in the goal.
         '''
-        if self._get_distance(self.current_position, self.path[-1]) < self.goal_threshold:
+        # Só permite terminar se o agente percorreu pelo menos 80% dos goals
+        goals = self.filtered_goals if hasattr(self, 'filtered_goals') else self.path
+        min_goals_required = int(len(goals) * 0.8)
+        
+        if self.current_goal_index < min_goals_required:
+            # Agente ainda não percorreu o suficiente do path
+            self.is_terminated = False
+            return
+            
+        # Verifica se chegou ao último goal filtrado
+        distance_to_final = self._get_distance(self.current_position, goals[-1])
+        
+        if distance_to_final < self.goal_threshold:
             self.is_terminated = True
             return
         self.is_terminated = False
@@ -406,14 +433,11 @@ class SimpleTerPathFollowingEnv(gym.Env):
         timeout = self.tick >= self.max_tick
         out_of_bound = self.current_goal_distance > self.out_of_bound_threshold
 
-        if not self.is_terminated and self.current_position[0] > self.path[-1][0]:
-            out_of_bound = True 
-
         if timeout or out_of_bound:
             self.is_truncated = True
 
     def _switch_path(self) -> np.ndarray:
-        '''Escolhe aleatoriamente entre real, fictício ou ambos'''
+        '''Escolhe aleatoriamente entre real, fictício ou ambos, ou seleciona pelo nome'''
         options = []
         if self.path_mode == "real":
             options = ["real"]
@@ -423,6 +447,15 @@ class SimpleTerPathFollowingEnv(gym.Env):
             options = ["real", "ficticio"]
         else:
             options = ["ficticio"]
+
+        # Se nome de path foi especificado, seleciona esse EXATAMENTE independentemente do modo
+        if self.selected_path_name is not None and self.real_paths:
+            for i, name in enumerate(self.real_paths_names):
+                # Garante correspondência exata, ignorando extensão se necessário
+                if self.selected_path_name == name or self.selected_path_name + ".txt" == name:
+                    print(f"Selecionando path específico: {name}")
+                    return self.real_paths[i]
+            print(f"Path '{self.selected_path_name}' não encontrado, usando aleatório.")
 
         chosen = np.random.choice(options)
         if chosen == "real" and self.real_paths:
@@ -481,6 +514,7 @@ class SimpleTerPathFollowingEnv(gym.Env):
             if np.linalg.norm(np.array(pt) - np.array(last)) >= min_dist:
                 filtered.append(pt)
                 last = pt
-        if not np.array_equal(filtered[-1], path[-1]):
+        # Só adiciona o último ponto se for realmente distinto do inicial
+        if not np.allclose(filtered[-1], path[-1]) and not np.allclose(path[0], path[-1]):
             filtered.append(path[-1])
         return np.array(filtered)

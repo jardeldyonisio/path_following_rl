@@ -15,7 +15,7 @@ from agent.ddpg import DDPGAgent
 # Use o mesmo SEED do treinamento
 SEED = 42
 paths_folder = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'paths'))
-env = SimpleTerPathFollowingEnv(path_mode="real", paths_folder=paths_folder)
+env = SimpleTerPathFollowingEnv(path_mode="real", paths_folder=paths_folder, selected_path_name="path_circular")
 obs_dim = 4 + env.num_goals_window
 agent = DDPGAgent(observation_dim=obs_dim, action_dim=2, max_action=1.0, seed=SEED)
 
