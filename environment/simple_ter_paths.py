@@ -62,6 +62,8 @@ class SimpleTerPathFollowingEnv(gym.Env):
         self.previous_action = np.zeros(self.action_space.shape[0])
         self.current_action = np.zeros(self.action_space.shape[0])
 
+        self.min_goal_separation = 0.2  # parâmetro ajustável
+
         self.path_mode = path_mode
         self.paths_folder = paths_folder
         self.real_paths = self._load_real_paths(self.paths_folder)
@@ -107,11 +109,9 @@ class SimpleTerPathFollowingEnv(gym.Env):
         self.linear_velocity : float = self.min_linear_velocity
         self.yaw_angle_error : float = 0.0
         self.angular_velocity : float = 0.0
-        self.current_goal_index : int = 1
+        self.current_goal_index : int = 0
         self.current_goal_distance : float = 0.0
-        self.current_goal_position : float = self.path[0]
         self.current_position : np.ndarray = np.array([-0.3, 0.0])
-        self.current_goals_window_position = self.path[1:self.goal_step * self.num_goals_window: self.goal_step]
         self.is_subgoal_reached: bool = False
         self.goal_reached_counter: int = 0
         self.subgoal_reacher_counter: int = 0
@@ -119,6 +119,16 @@ class SimpleTerPathFollowingEnv(gym.Env):
         self.is_terminated: bool = False
         self.is_truncated: bool = False
         self.distances = np.zeros(self.num_goals_window)
+
+        # Filtragem dos goals para paths reais
+        if self.path_mode == "real" or (self.path_mode == "ambos" and self.path in self.real_paths):
+            self.filtered_goals = self._filter_goals_by_distance(self.path, self.min_goal_separation)
+        else:
+            self.filtered_goals = self.path
+
+        self.current_goal_position : float = self.filtered_goals[0]
+        self.current_goal_index : int = 0
+        self.current_goals_window_position = self.filtered_goals[1:1+self.num_goals_window]
 
         observation = self._get_obs()
         info = self._get_info()
@@ -299,21 +309,22 @@ class SimpleTerPathFollowingEnv(gym.Env):
 
         self.current_goal_distance = self._goal_distance()
 
+        goals = self.filtered_goals if hasattr(self, 'filtered_goals') else self.path
+
         if self.current_goal_distance < self.goal_threshold:
-            if self.current_goal_index >= len(self.path) - 1:
+            if self.current_goal_index >= len(goals) - 1:
                 # Último objetivo atingido, termina episódio
-                self.current_goal_position = self.path[-1]
+                self.current_goal_position = goals[-1]
                 self.is_goal_reached = True
                 self.is_terminated = True
-                # Remove o objetivo para garantir que não será mais considerado
                 self.current_goals_window_position = np.array([])
                 self.distances = np.zeros(self.num_goals_window)
                 return
             else:
-                self.current_goal_index += self.goal_step
+                self.current_goal_index += 1
                 self.goal_reached_counter += 1
-                self.current_goal_position = self.path[self.current_goal_index]
-                self._generate_goals_window()
+                self.current_goal_position = goals[self.current_goal_index]
+                self.current_goals_window_position = goals[self.current_goal_index+1:self.current_goal_index+1+self.num_goals_window]
                 self.is_goal_reached = True
                 return
         self._update_subgoal()
@@ -453,4 +464,17 @@ class SimpleTerPathFollowingEnv(gym.Env):
         '''
         Generate a window of goals for the agent to follow.
         '''
-        self.current_goals_window_position = self.path[self.current_goal_index + 1:self.current_goal_index + self.num_goals_window: self.goal_step]
+        goals = self.filtered_goals if hasattr(self, 'filtered_goals') else self.path
+        self.current_goals_window_position = goals[self.current_goal_index + 1:self.current_goal_index + 1 + self.num_goals_window]
+
+    def _filter_goals_by_distance(self, path, min_dist):
+        '''Retorna lista de goals filtrados por distância mínima entre eles'''
+        filtered = [path[0]]
+        last = path[0]
+        for pt in path[1:]:
+            if np.linalg.norm(np.array(pt) - np.array(last)) >= min_dist:
+                filtered.append(pt)
+                last = pt
+        if not np.array_equal(filtered[-1], path[-1]):
+            filtered.append(path[-1])
+        return np.array(filtered)
