@@ -223,6 +223,12 @@ class SimpleTerPathFollowingEnv(gym.Env):
 
         self.distance_title.set_text(f'Goal distance: {self.current_goal_distance:.2f}m | Current tick: {self.tick}')
 
+        # Ajusta a janela do gráfico para seguir o agente
+        margin_x = 5
+        margin_y = 2.5
+        self.ax.set_xlim(agent_x - margin_x, agent_x + margin_x)
+        self.ax.set_ylim(agent_y - margin_y, agent_y + margin_y)
+
         self.fig.canvas.draw_idle()
         self.fig.canvas.flush_events()
 
