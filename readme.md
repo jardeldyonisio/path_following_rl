@@ -91,3 +91,21 @@ If you use this code in your research, please cite the repository as follows:
   url = {https://github.com/jardeldyonisio/path_following_rl}
 }
 ```
+
+
+
+
+
+
+
+
+
+
+# Teste normal (sem gravar)
+python3 scripts/test.py --episodes 5 --path path_circular
+
+# Teste gravando trajetórias
+python3 scripts/test.py --episodes 5 --path path_circular --save-trajectory
+
+# Forma curta
+python3 scripts/test.py -e 5 -p path_circular -s

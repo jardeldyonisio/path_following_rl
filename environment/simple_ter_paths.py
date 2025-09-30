@@ -13,11 +13,13 @@ This class implements a single-agent environment for path following.
 
 class SimpleTerPathFollowingEnv(gym.Env):
 
-    def __init__(self, path_mode: str = "ficticio", paths_folder: str = "../paths", selected_path_name: str = None):
+    def __init__(self, path_mode: str = "ficticio", paths_folder: str = "../paths", selected_path_name: str = None, save_trajectory: bool = False, trajectory_folder: str = "../trajectories"):
         '''
         path_mode: "real", "ficticio" ou "ambos"
         paths_folder: pasta onde estão os arquivos de caminho real
         selected_path_name: nome do arquivo de path desejado (ex: "path_circular.txt")
+        save_trajectory: se True, grava a trajetória do agente em arquivo
+        trajectory_folder: pasta onde salvar as trajetórias gravadas
         '''
         super().__init__()
         self.max_tick = 800
@@ -68,6 +70,10 @@ class SimpleTerPathFollowingEnv(gym.Env):
         self.path_mode = path_mode
         self.paths_folder = paths_folder
         self.selected_path_name = selected_path_name
+        self.save_trajectory = save_trajectory
+        self.trajectory_folder = trajectory_folder
+        self.trajectory_points = []  # Lista para armazenar pontos da trajetória
+        
         self.real_paths, self.real_paths_names = self._load_real_paths_with_names(self.paths_folder)
         self.path = self._switch_path()
 
@@ -141,6 +147,10 @@ class SimpleTerPathFollowingEnv(gym.Env):
         self.is_truncated = False
         self.distances = np.zeros(self.num_goals_window)
 
+        # Reiniciar gravação da trajetória se habilitada
+        if self.save_trajectory:
+            self.trajectory_points = []
+
         self.current_goal_position = self.filtered_goals[0]
         self.current_goals_window_position = self.filtered_goals[1:1+self.num_goals_window]
 
@@ -169,10 +179,17 @@ class SimpleTerPathFollowingEnv(gym.Env):
         self._is_goal_reached()
         self._is_terminated()
 
+        # Gravar posição atual se habilitado
+        if self.save_trajectory:
+            self.trajectory_points.append([self.current_position[0], self.current_position[1]])
+
         terminated = self.is_terminated
 
         if terminated:
             self.terminated_counter += 1
+            # Salvar trajetória quando episódio termina
+            if self.save_trajectory and len(self.trajectory_points) > 0:
+                self._save_trajectory_to_file()
 
         reward = self._rewards()
         observation = self._get_obs()
@@ -518,3 +535,24 @@ class SimpleTerPathFollowingEnv(gym.Env):
         if not np.allclose(filtered[-1], path[-1]) and not np.allclose(path[0], path[-1]):
             filtered.append(path[-1])
         return np.array(filtered)
+
+    def _save_trajectory_to_file(self):
+        '''Salva a trajetória do agente em arquivo no formato de path'''
+        import os
+        from datetime import datetime
+        
+        # Criar pasta se não existir
+        os.makedirs(self.trajectory_folder, exist_ok=True)
+        
+        # Nome do arquivo com timestamp
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        path_name = self.selected_path_name or "unknown"
+        filename = f"trajectory_{path_name}_{timestamp}.txt"
+        filepath = os.path.join(self.trajectory_folder, filename)
+        
+        # Salvar pontos no formato x,y
+        with open(filepath, 'w') as f:
+            for point in self.trajectory_points:
+                f.write(f"{point[0]:.6f},{point[1]:.6f}\n")
+        
+        print(f"[INFO] Trajetória salva em: {filepath} ({len(self.trajectory_points)} pontos)")

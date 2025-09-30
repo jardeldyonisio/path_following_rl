@@ -16,6 +16,8 @@ def main():
                        help='Número de episódios para executar (padrão: 10)')
     parser.add_argument('--path', '-p', type=str, default='path_circular',
                        help='Nome do path a ser usado (padrão: path_circular)')
+    parser.add_argument('--save-trajectory', '-s', action='store_true',
+                       help='Salvar trajetória do agente em arquivo')
     args = parser.parse_args()
 
     # Definir o ambiente
@@ -24,7 +26,14 @@ def main():
     # Use o mesmo SEED do treinamento
     SEED = 42
     paths_folder = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'paths'))
-    env = SimpleTerPathFollowingEnv(path_mode="real", paths_folder=paths_folder, selected_path_name=args.path)
+    trajectories_folder = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'trajectories'))
+    env = SimpleTerPathFollowingEnv(
+        path_mode="real", 
+        paths_folder=paths_folder, 
+        selected_path_name=args.path,
+        save_trajectory=args.save_trajectory,
+        trajectory_folder=trajectories_folder
+    )
     obs_dim = 4 + env.num_goals_window
     agent = DDPGAgent(observation_dim=obs_dim, action_dim=2, max_action=1.0, seed=SEED)
 
@@ -36,6 +45,8 @@ def main():
     agent.actor.eval()  # Coloca a rede em modo de avaliação
 
     print(f"Iniciando teste com {args.episodes} episódios usando path '{args.path}'...")
+    if args.save_trajectory:
+        print(f"[INFO] Trajetórias serão salvas em: {trajectories_folder}")
 
     # Rodar a simulação
     for episode in range(args.episodes):
