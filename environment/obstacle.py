@@ -18,12 +18,20 @@ class ObstaclePathFollowingEnv(gym.Env):
         
         '''
         super().__init__()
+        
+        # Simulation parameters
         self.max_tick: int = 800
         self.goal_step: int = 1
         self.num_goals_window: int = 15
         self.out_of_bound_threshold: int = (self.goal_step * self.num_goals_window) + self.goal_step
         self.goal_threshold: float = 0.2
+        self.min_goal_distance: float = 0.0
+        self.max_goal_distance: float = self.out_of_bound_threshold
+        self.min_yaw_error: float = -np.pi * 2
+        self.max_yaw_error: float = np.pi * 2
+        self.terminated_counter: int = 1
 
+        # Agent parameters
         self.min_linear_velocity: float = 0.01
         self.max_linear_velocity: float = 0.25
 
@@ -33,16 +41,9 @@ class ObstaclePathFollowingEnv(gym.Env):
         self.agent_radius: float = 0.105 # Based on turtlebot3
         self.agent_footprint_radius: float = self.agent_radius * 1.2
 
-        self.inflation_radius: float = 0.2
+        # Obstacle parameters
+        self.obstacle_inflation_radius: float = 20.2
 
-        self.min_goal_distance: float = 0.0
-        self.max_goal_distance: float = self.out_of_bound_threshold
-
-        self.min_yaw_error: float = -np.pi * 2
-        self.max_yaw_error: float = np.pi * 2
-
-        self.terminated_counter: int = 1
-        
         self.action_space = gym.spaces.Box(
             low=np.array([-1.0, -1.0]),
             high=np.array([1.0, 1.0]),
@@ -123,6 +124,9 @@ class ObstaclePathFollowingEnv(gym.Env):
         self.angular_velocity = self.min_angular_velocity + (self.max_angular_velocity - self.min_angular_velocity) * ((self.current_action[1] + 1) / 2)
 
         self._update_agent_position()
+        self._check_obstacle_collision()
+        self._check_footprint_obstacle_overlap()
+        self._check_footprint_costmap_overlap()
         self._get_angle_error()
         self._is_goal_reached()
         self._is_terminated()
@@ -231,16 +235,15 @@ class ObstaclePathFollowingEnv(gym.Env):
         # Update obstacle and costmap in world space
         if hasattr(self, 'obstacle') and self.obstacle is not None:
             obstacle_x, obstacle_y = self.obstacle['position']
-            obstacle_size = self.obstacle['size']
-            obstacle_radius = obstacle_size / 2
-            
+            obstacle_radius = self.obstacle['radius']
+
             # Update core obstacle
             self.obstacle_marker.set_center((obstacle_x, obstacle_y))
             self.obstacle_marker.set_radius(obstacle_radius)
             self.obstacle_marker.set_visible(True)
             
             # Update costmap (core + inflation radius)
-            costmap_radius = obstacle_radius + self.inflation_radius
+            costmap_radius = obstacle_radius + self.obstacle_inflation_radius
             self.obstacle_costmap.set_center((obstacle_x, obstacle_y))
             self.obstacle_costmap.set_radius(costmap_radius)
             self.obstacle_costmap.set_visible(True)
@@ -299,7 +302,7 @@ class ObstaclePathFollowingEnv(gym.Env):
             *self.distances,
             self.obstacle['position'][0],
             self.obstacle['position'][1],
-            self.obstacle['size']
+            self.obstacle['radius']
         ])
 
     def _rewards(self) -> float:
@@ -385,11 +388,7 @@ class ObstaclePathFollowingEnv(gym.Env):
         # Check if any minor goal is reached
         if len(available_distances) > 0 and np.any(available_distances < self.goal_threshold):
             closest_goal_index = np.argmin(available_distances)
-            # self.current_goal_index = closest_goal_index + self.current_goal_index + 1
-            # reached_subgoal_index = (self.current_goal_index + 1) + closest_goal_index * self.goal_step
-            # self.current_goal_index = reached_subgoal_index + self.goal_step
             self.current_goal_index = (self.current_goal_index + 1) + (closest_goal_index + 1) * self.goal_step
-            # self.current_goal_index = (self.current_goal_index + 1) + closest_goal_index * self.goal_step # Dranaju fixed version
             if self.current_goal_index < len(self.path):
                 self.current_goal_position = self.path[self.current_goal_index]
             else:
@@ -486,12 +485,14 @@ class ObstaclePathFollowingEnv(gym.Env):
         # Get a random position on the path for the obstacle
         obstacle_index = np.random.randint(0, len(self.path) - 1)
         obstacle_position = self.path[obstacle_index]
-        obstacle_size = np.random.uniform(0.1, 1.0)
+
+        # Random size for the obstacle
+        obstacle_radius = np.random.uniform(0.1, 1.0)
 
         # Create an obstacle at the position
         self.obstacle = {
             'position': obstacle_position,
-            'size': obstacle_size
+            'radius': obstacle_radius
         }
     
     def _check_obstacle_collision(self) -> None:
@@ -502,18 +503,66 @@ class ObstaclePathFollowingEnv(gym.Env):
             self.obstacle_collision = False
             return
         
-        # Get positions
+        # Current implementation: Circle-Circle overlap
         agent_pos = self.current_position
         obstacle_pos = np.array(self.obstacle['position'])
         
-        # Calculate distance between centers
         distance = self._get_distance(agent_pos, obstacle_pos)
         
-        # Calculate collision threshold (sum of radii)
-        obstacle_radius = self.obstacle['size'] / 2  # Assuming size is diameter
-        collision_threshold = self.agent_footprint_radius + obstacle_radius
+        # True geometric overlap (no safety margins)
+        agent_radius = self.agent_radius
+        obstacle_radius = self.obstacle['radius']
         
-        # Check collision
-        self.obstacle_collision = distance < collision_threshold
+        # Overlap occurs when distance < sum of radii
+        self.obstacle_collision = distance < (agent_radius + obstacle_radius)
+        if self.obstacle_collision:
+            print("Collision detected with obstacle!")
 
+    def _check_footprint_obstacle_overlap(self) -> None:
+        '''
+        Check if the agent's footprint overlaps with the obstacle.
+        '''
+        if self.obstacle is None:
+            self.footprint_overlap = False
+            return
+        
+        # Current implementation: Circle-Circle overlap
+        agent_pos = self.current_position
+        obstacle_pos = np.array(self.obstacle['position'])
+        
+        distance = self._get_distance(agent_pos, obstacle_pos)
+        
+        # True geometric overlap with footprint
+        agent_footprint_radius = self.agent_footprint_radius
+        obstacle_radius = self.obstacle['radius']
+        
+        # Overlap occurs when distance < sum of radii
+        self.footprint_overlap = distance < (agent_footprint_radius + obstacle_radius)
+
+        if self.footprint_overlap:
+            print("Footprint overlaps with obstacle!")
+        
+    def _check_footprint_costmap_overlap(self) -> None:
+        '''
+        Check if the agent's footprint overlaps with the obstacle's costmap.
+        '''
+        if self.obstacle is None:
+            self.costmap_overlap = False
+            return
+        
+        # Current implementation: Circle-Circle overlap with inflation
+        agent_pos = self.current_position
+        obstacle_pos = np.array(self.obstacle['position'])
+        
+        distance = self._get_distance(agent_pos, obstacle_pos)
+        
+        # Inflated geometric overlap
+        agent_footprint_radius = self.agent_footprint_radius
+        obstacle_inflation = self.obstacle['radius'] + self.obstacle_inflation_radius
+        
+        # Overlap occurs when distance < sum of inflated radii
+        self.costmap_overlap = distance < (agent_footprint_radius + obstacle_inflation)
+
+        if self.costmap_overlap:
+            print("Footprint overlaps with obstacle costmap!")
 
