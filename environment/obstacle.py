@@ -42,7 +42,7 @@ class ObstaclePathFollowingEnv(gym.Env):
         self.agent_footprint_radius: float = self.agent_radius * 1.2
 
         # Obstacle parameters
-        self.obstacle_inflation_radius: float = 20.2
+        self.obstacle_inflation_radius: float = 0.2
 
         self.action_space = gym.spaces.Box(
             low=np.array([-1.0, -1.0]),
