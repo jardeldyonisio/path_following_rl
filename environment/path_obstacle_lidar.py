@@ -45,8 +45,8 @@ class PathObstacleLidarEnv(gym.Env):
         self.obstacle_inflation_radius: float = 0.2
 
         # LiDAR parameters
-        self.num_rays: int = 8  # Number of rays to cast
-        self.lidar_range: float = 5.0  # Maximum detection range
+        self.num_rays: int = 24  # Number of rays to cast
+        self.lidar_range: float = 2.5  # Maximum detection range
         self.lidar_fov: float = np.pi  # Field of view (±90° ahead)
 
         self.action_space = gym.spaces.Box(
@@ -624,7 +624,7 @@ class PathObstacleLidarEnv(gym.Env):
             ray_angles = np.linspace(-self.lidar_fov/2, self.lidar_fov/2, self.num_rays)
         
         obstacle_pos = np.array(self.obstacle['position'])
-        obstacle_radius = self.obstacle['radius'] + self.obstacle_inflation_radius  # Use inflated radius
+        obstacle_radius = self.obstacle['radius']  # Use only core obstacle radius (no inflation)
         
         for i, relative_angle in enumerate(ray_angles):
             # Calculate absolute ray direction in world coordinates
