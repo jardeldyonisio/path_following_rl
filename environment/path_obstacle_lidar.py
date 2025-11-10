@@ -361,6 +361,11 @@ class PathObstacleLidarEnv(gym.Env):
         sucess_reward = 0.0
         reward_distance = 0.0
         truncated_reward = 0.0
+        
+        # Obstacle penalty rewards
+        collision_penalty = 0.0
+        footprint_obstacle_penalty = 0.0
+        footprint_costmap_penalty = 0.0
 
         reward_distance = -self.current_goal_distance * 0.1
         
@@ -372,7 +377,17 @@ class PathObstacleLidarEnv(gym.Env):
             sucess_reward = 100.0
         if self.is_truncated:
             truncated_reward = -100.0
-        rewards = reward_goal_reached + sucess_reward + reward_subgoal_reached + reward_distance + truncated_reward
+            
+        # Add obstacle penalties (no collision penalty - episode ends instead)
+        if hasattr(self, 'footprint_obstacle_overlap') and self.footprint_obstacle_overlap:
+            footprint_obstacle_penalty = -50.0  # High penalty for footprint touching obstacle
+            
+        if hasattr(self, 'footprint_costmap_overlap') and self.footprint_costmap_overlap:
+            footprint_costmap_penalty = -25.0  # Moderate penalty for entering inflation zone
+            
+        rewards = (reward_goal_reached + sucess_reward + reward_subgoal_reached + 
+                  reward_distance + truncated_reward + 
+                  footprint_obstacle_penalty + footprint_costmap_penalty)
 
         return rewards
     
@@ -459,11 +474,12 @@ class PathObstacleLidarEnv(gym.Env):
         '''
         timeout = self.tick >= self.max_tick
         out_of_bound = self.current_goal_distance > self.out_of_bound_threshold
+        collision_occurred = hasattr(self, 'obstacle_collision') and self.obstacle_collision
 
         if not self.is_terminated and self.current_position[0] > self.path[-1][0]:
             out_of_bound = True 
 
-        if timeout or out_of_bound:
+        if timeout or out_of_bound or collision_occurred:
             self.is_truncated = True
 
     def _switch_path(self) -> str:
