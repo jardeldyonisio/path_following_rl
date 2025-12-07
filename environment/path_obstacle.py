@@ -12,7 +12,7 @@ from typing import Optional
 This class implements a single-agent environment for path following.
 '''
 
-class PathObstacleLidarEnv(gym.Env):
+class PathObstacleEnv(gym.Env):
     def __init__(self):
         '''
         @brief Initialize the environment.
@@ -44,29 +44,24 @@ class PathObstacleLidarEnv(gym.Env):
         # Obstacle parameters
         self.obstacle_inflation_radius: float = 0.2
 
-        # LiDAR parameters
-        self.num_rays: int = 24  # Number of rays to cast
-        self.lidar_range: float = 2.5  # Maximum detection range
-        self.lidar_fov: float = np.pi  # Field of view (±90° ahead)
-
         self.action_space = gym.spaces.Box(
             low=np.array([-1.0, -1.0]),
             high=np.array([1.0, 1.0]),
             dtype=np.float32
         )
 
-        # State: [distance_to_goal, linear_vel, angular_vel, yaw_error, ray_distances..., goal_distances...]
+        # State: [distance_to_goal, linear_vel, angular_vel, yaw_error]
         self.observation_space = gym.spaces.Box(
             low=np.array([self.min_goal_distance, 
                           -1.0, 
                           -1.0, 
                           self.min_yaw_error,
-                          ] + [0.0] * self.num_rays + [self.min_goal_distance] * self.num_goals_window),
+                          ] + [self.min_goal_distance] * self.num_goals_window),
             high=np.array([self.max_goal_distance, 
                            1.0, 
                            1.0, 
                            self.max_yaw_error
-                           ] + [1.0] * self.num_rays + [self.max_goal_distance] * self.num_goals_window),
+                           ] + [self.max_goal_distance] * self.num_goals_window),
             dtype=np.float32
         )
 
@@ -120,9 +115,6 @@ class PathObstacleLidarEnv(gym.Env):
         self.is_goal_reached: bool = False
         self.distances = np.zeros(self.num_goals_window)
 
-        # Initialize LiDAR ray distances
-        self.ray_distances = self._cast_rays()
-
         observation = self._get_obs()
         info = self._get_info()
 
@@ -148,9 +140,6 @@ class PathObstacleLidarEnv(gym.Env):
         self._get_angle_error()
         self._is_goal_reached()
         self._is_terminated()
-        
-        # Update LiDAR ray distances
-        self.ray_distances = self._cast_rays()
 
         terminated = self.is_terminated
 
@@ -225,12 +214,6 @@ class PathObstacleLidarEnv(gym.Env):
             self.agent_front, = self.ax.plot([], [], linestyle='-', color='red', label='Agent Nose')
             self.desired_yaw, = self.ax.plot([], [], linestyle='--', color='orange', label='Desired Yaw')
             
-            # LiDAR ray markers
-            self.lidar_rays = []
-            for i in range(self.num_rays):
-                ray_line, = self.ax.plot([], [], linestyle='-', color='cyan', alpha=0.6, linewidth=1)
-                self.lidar_rays.append(ray_line)
-            
             self.distance_title = self.ax.set_title('Distance to Goal: 0.00m | Current tick: 0')
 
             self.ax.legend()
@@ -285,24 +268,6 @@ class PathObstacleLidarEnv(gym.Env):
 
         self.agent_footprint_marker.set_center((agent_x, agent_y))
 
-        # Update LiDAR rays visualization
-        if hasattr(self, 'ray_distances'):
-            if self.num_rays == 1:
-                ray_angles = [0.0]
-            else:
-                ray_angles = np.linspace(-self.lidar_fov/2, self.lidar_fov/2, self.num_rays)
-            
-            for i, (ray_line, relative_angle) in enumerate(zip(self.lidar_rays, ray_angles)):
-                ray_angle = self.agent_yaw + relative_angle
-                
-                # Convert normalized distance back to actual distance for visualization
-                actual_distance = (1.0 - self.ray_distances[i]) * self.lidar_range
-                
-                end_x = agent_x + actual_distance * np.cos(ray_angle)
-                end_y = agent_y + actual_distance * np.sin(ray_angle)
-                
-                ray_line.set_data([agent_x, end_x], [agent_y, end_y])
-
         self.distance_title.set_text(f'Goal distance: {self.current_goal_distance:.2f}m | Current tick: {self.tick}')
 
         self.fig.canvas.draw_idle()
@@ -348,7 +313,6 @@ class PathObstacleLidarEnv(gym.Env):
             self.previous_action[0],
             self.previous_action[1],
             self.desired_yaw_angle,
-            *self.ray_distances,
             *self.distances
         ])
 
@@ -361,13 +325,8 @@ class PathObstacleLidarEnv(gym.Env):
         sucess_reward = 0.0
         reward_distance = 0.0
         truncated_reward = 0.0
-        
-        # Obstacle penalty rewards
-        collision_penalty = 0.0
-        footprint_obstacle_penalty = 0.0
-        footprint_costmap_penalty = 0.0
 
-        reward_distance = -self.current_goal_distance * 0.4
+        reward_distance = -self.current_goal_distance * 0.1
         
         if self.is_goal_reached:
             reward_goal_reached = 10.0
@@ -377,25 +336,7 @@ class PathObstacleLidarEnv(gym.Env):
             sucess_reward = 100.0
         if self.is_truncated:
             truncated_reward = -100.0
-
-        # Add a reward that penalties when the agent orientation is wrong
-
-        # Add a reward that penalties when the agent is going to a different direction of the path
-
-        # if self.is_terminated:
-        # 1 - 600/800
-        #     reward_success = 100.0 * (1 - self.tick / self.max_tick)
-            
-        # Add obstacle penalties (no collision penalty - episode ends instead)
-        if hasattr(self, 'footprint_obstacle_overlap') and self.footprint_obstacle_overlap:
-            footprint_obstacle_penalty = -50.0  # High penalty for footprint touching obstacle
-            
-        if hasattr(self, 'footprint_costmap_overlap') and self.footprint_costmap_overlap:
-            footprint_costmap_penalty = -25.0  # Moderate penalty for entering inflation zone
-            
-        rewards = (reward_goal_reached + sucess_reward + reward_subgoal_reached + 
-                  reward_distance + truncated_reward + 
-                  footprint_obstacle_penalty + footprint_costmap_penalty)
+        rewards = reward_goal_reached + sucess_reward + reward_subgoal_reached + reward_distance + truncated_reward
 
         return rewards
     
@@ -482,12 +423,11 @@ class PathObstacleLidarEnv(gym.Env):
         '''
         timeout = self.tick >= self.max_tick
         out_of_bound = self.current_goal_distance > self.out_of_bound_threshold
-        collision_occurred = hasattr(self, 'obstacle_collision') and self.obstacle_collision
 
         if not self.is_terminated and self.current_position[0] > self.path[-1][0]:
             out_of_bound = True 
 
-        if timeout or out_of_bound or collision_occurred:
+        if timeout or out_of_bound:
             self.is_truncated = True
 
     def _switch_path(self) -> str:
@@ -628,65 +568,3 @@ class PathObstacleLidarEnv(gym.Env):
 
         if self.footprint_costmap_overlap:
             print("Footprint overlaps with obstacle costmap!")
-    
-    def _cast_rays(self) -> np.ndarray:
-        '''
-        Cast rays in multiple directions to simulate LiDAR and measure distances to obstacles.
-        
-        @return: Array of distances for each ray (normalized to [0,1])
-        '''
-        ray_distances = np.full(self.num_rays, self.lidar_range)  # Initialize with max range
-        
-        if self.obstacle is None:
-            return ray_distances / self.lidar_range  # Normalize to [0,1]
-        
-        # Generate ray angles relative to agent's current heading
-        # Rays span from -lidar_fov/2 to +lidar_fov/2 relative to agent's yaw
-        if self.num_rays == 1:
-            ray_angles = [0.0]
-        else:
-            ray_angles = np.linspace(-self.lidar_fov/2, self.lidar_fov/2, self.num_rays)
-        
-        obstacle_pos = np.array(self.obstacle['position'])
-        obstacle_radius = self.obstacle['radius']  # Use only core obstacle radius (no inflation)
-        
-        for i, relative_angle in enumerate(ray_angles):
-            # Calculate absolute ray direction in world coordinates
-            ray_angle = self.agent_yaw + relative_angle
-            ray_direction = np.array([np.cos(ray_angle), np.sin(ray_angle)])
-            
-            # Ray-circle intersection calculation
-            # Ray: P = agent_pos + t * ray_direction (t >= 0)
-            # Circle: |P - obstacle_pos|² = obstacle_radius²
-            
-            # Vector from agent to obstacle center (corrected)
-            d = self.current_position - obstacle_pos
-            
-            # Quadratic equation coefficients for intersection
-            # |d + t * ray_direction|² = obstacle_radius²
-            a = np.dot(ray_direction, ray_direction)  # Should be 1 for unit vector
-            b = 2 * np.dot(d, ray_direction)
-            c = np.dot(d, d) - obstacle_radius**2
-            
-            discriminant = b**2 - 4*a*c
-            
-            if discriminant >= 0:
-                # Ray intersects the circle
-                sqrt_discriminant = np.sqrt(discriminant)
-                t1 = (-b - sqrt_discriminant) / (2*a)
-                t2 = (-b + sqrt_discriminant) / (2*a)
-                
-                # We want the closest positive intersection
-                valid_intersections = [t for t in [t1, t2] if t >= 0]
-                
-                if valid_intersections:
-                    closest_t = min(valid_intersections)
-                    distance = closest_t
-                    
-                    # Clamp distance to lidar range
-                    if distance <= self.lidar_range:
-                        ray_distances[i] = distance
-        
-        # Normalize distances to [0,1] where 0 = max_range (far), 1 = 0 (very close)
-        normalized_distances = 1.0 - (ray_distances / self.lidar_range)
-        return np.clip(normalized_distances, 0.0, 1.0)

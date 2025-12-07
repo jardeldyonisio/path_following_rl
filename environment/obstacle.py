@@ -52,21 +52,21 @@ class ObstaclePathFollowingEnv(gym.Env):
 
         # State: [distance_to_goal, linear_vel, angular_vel, yaw_error]
         self.observation_space = gym.spaces.Box(
-            low=np.array([self.min_goal_distance, 
-                          -1.0, 
-                          -1.0, 
-                          self.min_yaw_error
-                          ] + [self.min_goal_distance] * self.num_goals_window),
-                           # Add obstacle position and size
+        low=np.array([self.min_goal_distance, # distance_to_goal
+                      -1.0, # linear_vel
+                      -1.0, # angular_vel
+                      self.min_yaw_error # yaw_error
+                      ] + [self.min_goal_distance] * self.num_goals_window + # path distances
+                      [0.0]), # obstacle distance
 
-            high=np.array([self.max_goal_distance, 
-                           1.0, 
-                           1.0, 
-                           self.max_yaw_error
-                           ] + [self.max_goal_distance] * self.num_goals_window),
-                           # Add obstacle position and size
-            dtype=np.float32
-        )
+        high=np.array([self.max_goal_distance, 
+                       1.0, 
+                       1.0, 
+                       self.max_yaw_error
+                       ] + [self.max_goal_distance] * self.num_goals_window + # path distances
+                       [100.0]), # obstacle distance
+        dtype=np.float32
+    )
 
         self.previous_action = np.zeros(self.action_space.shape[0])
         self.current_action = np.zeros(self.action_space.shape[0])
@@ -104,6 +104,9 @@ class ObstaclePathFollowingEnv(gym.Env):
         self.is_truncated: bool = False
         self.distances = np.zeros(self.num_goals_window)
         self.obstacle_collision: bool = False
+        self.footprint_obstacle_overlap: bool = False
+        self.footprint_costmap_overlap: bool = False
+        self.obstacle_distance: float = 0.0
 
         observation = self._get_obs()
         info = self._get_info()
@@ -300,9 +303,7 @@ class ObstaclePathFollowingEnv(gym.Env):
             self.previous_action[1],
             self.desired_yaw_angle,
             *self.distances,
-            self.obstacle['position'][0],
-            self.obstacle['position'][1],
-            self.obstacle['radius']
+            self.obstacle_distance
         ])
 
     def _rewards(self) -> float:
@@ -315,11 +316,17 @@ class ObstaclePathFollowingEnv(gym.Env):
         reward_distance = 0.0
         truncated_reward = 0.0
         reward_obstacle_collision = 0.0
+        reward_footprint_obstacle_overlap = 0.0
+        reward_footprint_costmap_overlap = 0.0
 
         reward_distance = -self.current_goal_distance * 0.1
         
-        if self.obstacle_collision:
-            reward_obstacle_collision -= 100.0
+        # if self.obstacle_collision:
+        #     reward_obstacle_collision -= 100.0
+        if self.footprint_obstacle_overlap:
+            reward_footprint_obstacle_overlap -= 50.0
+        if self.footprint_costmap_overlap:
+            reward_footprint_costmap_overlap -= 20.0
         if self.is_goal_reached:
             reward_goal_reached = 10.0
         if self.is_subgoal_reached:
@@ -334,7 +341,9 @@ class ObstaclePathFollowingEnv(gym.Env):
                   reward_subgoal_reached + \
                   reward_distance + \
                   truncated_reward + \
-                  reward_obstacle_collision
+                  reward_footprint_obstacle_overlap + \
+                  reward_footprint_costmap_overlap
+                #   reward_obstacle_collision
 
         return rewards
     
@@ -423,7 +432,7 @@ class ObstaclePathFollowingEnv(gym.Env):
         if not self.is_terminated and self.current_position[0] > self.path[-1][0]:
             out_of_bound = True 
 
-        if timeout or out_of_bound:
+        if timeout or out_of_bound or self.obstacle_collision:
             self.is_truncated = True
 
     def _switch_path(self) -> str:
@@ -507,14 +516,14 @@ class ObstaclePathFollowingEnv(gym.Env):
         agent_pos = self.current_position
         obstacle_pos = np.array(self.obstacle['position'])
         
-        distance = self._get_distance(agent_pos, obstacle_pos)
+        self.obstacle_distance = self._get_distance(agent_pos, obstacle_pos)
         
         # True geometric overlap (no safety margins)
         agent_radius = self.agent_radius
         obstacle_radius = self.obstacle['radius']
         
         # Overlap occurs when distance < sum of radii
-        self.obstacle_collision = distance < (agent_radius + obstacle_radius)
+        self.obstacle_collision = self.obstacle_distance < (agent_radius + obstacle_radius)
         if self.obstacle_collision:
             print("Collision detected with obstacle!")
 
@@ -523,7 +532,7 @@ class ObstaclePathFollowingEnv(gym.Env):
         Check if the agent's footprint overlaps with the obstacle.
         '''
         if self.obstacle is None:
-            self.footprint_overlap = False
+            self.footprint_obstacle_overlap = False
             return
         
         # Current implementation: Circle-Circle overlap
@@ -537,9 +546,9 @@ class ObstaclePathFollowingEnv(gym.Env):
         obstacle_radius = self.obstacle['radius']
         
         # Overlap occurs when distance < sum of radii
-        self.footprint_overlap = distance < (agent_footprint_radius + obstacle_radius)
+        self.footprint_obstacle_overlap = distance < (agent_footprint_radius + obstacle_radius)
 
-        if self.footprint_overlap:
+        if self.footprint_obstacle_overlap:
             print("Footprint overlaps with obstacle!")
         
     def _check_footprint_costmap_overlap(self) -> None:
@@ -547,7 +556,7 @@ class ObstaclePathFollowingEnv(gym.Env):
         Check if the agent's footprint overlaps with the obstacle's costmap.
         '''
         if self.obstacle is None:
-            self.costmap_overlap = False
+            self.footprint_costmap_overlap = False
             return
         
         # Current implementation: Circle-Circle overlap with inflation
@@ -561,8 +570,8 @@ class ObstaclePathFollowingEnv(gym.Env):
         obstacle_inflation = self.obstacle['radius'] + self.obstacle_inflation_radius
         
         # Overlap occurs when distance < sum of inflated radii
-        self.costmap_overlap = distance < (agent_footprint_radius + obstacle_inflation)
+        self.footprint_costmap_overlap = distance < (agent_footprint_radius + obstacle_inflation)
 
-        if self.costmap_overlap:
+        if self.footprint_costmap_overlap:
             print("Footprint overlaps with obstacle costmap!")
 
