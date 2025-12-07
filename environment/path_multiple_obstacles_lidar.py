@@ -12,7 +12,7 @@ from typing import Optional
 This class implements a single-agent environment for path following.
 '''
 
-class PathObstacleLidarEnv(gym.Env):
+class PathMultiObstaclesLidarEnv(gym.Env):
     def __init__(self):
         '''
         @brief Initialize the environment.
@@ -120,6 +120,8 @@ class PathObstacleLidarEnv(gym.Env):
         self.is_goal_reached: bool = False
         self.distances = np.zeros(self.num_goals_window)
 
+        self.yaw_error_to_path = 0.0
+
         # Initialize LiDAR ray distances
         self.ray_distances = self._cast_rays()
 
@@ -146,6 +148,9 @@ class PathObstacleLidarEnv(gym.Env):
         # Update LiDAR ray distances BEFORE collision checks
         # so the agent can see obstacles in the next observation
         self.ray_distances = self._cast_rays()
+
+        # Just testing
+        self._get_closest_point_direction()
         
         self._check_footprint_costmap_overlap()
         self._check_footprint_obstacle_overlap()
@@ -358,7 +363,7 @@ class PathObstacleLidarEnv(gym.Env):
             self.previous_action[1],
             self.desired_yaw_angle,
             *self.ray_distances,
-            *self.distances
+            *self.distances # Distances to subgoals
         ])
 
     def _rewards(self) -> float:
@@ -372,7 +377,7 @@ class PathObstacleLidarEnv(gym.Env):
         truncated_reward = 0.0
         
         # Obstacle penalty rewards
-        collision_penalty = 0.0
+        direction_penalty = 0.0
         footprint_obstacle_penalty = 0.0
         footprint_costmap_penalty = 0.0
 
@@ -386,13 +391,14 @@ class PathObstacleLidarEnv(gym.Env):
             sucess_reward = 100.0
         if self.is_truncated:
             truncated_reward = -100.0
+        if abs(self.yaw_error_to_path) > 0.15:
+            direction_penalty = -1.0 
 
         # Add a reward that penalties when the agent orientation is wrong
 
         # Add a reward that penalties when the agent is going to a different direction of the path
 
         # if self.is_terminated:
-        # 1 - 600/800
         #     reward_success = 100.0 * (1 - self.tick / self.max_tick)
             
         # Add obstacle penalties (no collision penalty - episode ends instead)
@@ -404,7 +410,7 @@ class PathObstacleLidarEnv(gym.Env):
             
         rewards = (reward_goal_reached + sucess_reward + reward_subgoal_reached + 
                   reward_distance + truncated_reward + 
-                  footprint_obstacle_penalty + footprint_costmap_penalty)
+                  footprint_obstacle_penalty + footprint_costmap_penalty + direction_penalty)
 
         return rewards
     
@@ -414,22 +420,70 @@ class PathObstacleLidarEnv(gym.Env):
         '''
         return np.linalg.norm(self.current_position - self.current_goal_position)
 
-    def _is_goal_reached(self) -> None:
-        '''
-        Check if the goal is reached and update if in this case.
-        '''
+    # def _is_goal_reached(self) -> None:
+    #     '''
+    #     Check if the goal is reached and update if in this case.
+    #     '''
+    #     self.current_goal_distance = self._goal_distance()
+
+    #     if self.current_goal_distance < self.goal_threshold:
+    #         self.current_goal_index += self.goal_step
+    #         self.goal_reached_counter += 1
+    #         if self.current_goal_index < len(self.path):
+    #             self.current_goal_position = self.path[self.current_goal_index]
+    #         else:
+    #             self.current_goal_position = self.path[-1]
+    #         self._generate_goals_window()
+    #         self.is_goal_reached = True
+    #         return
+    #     self._update_subgoal()
+    #     self.is_goal_reached = False
+
+    def _is_goal_reached(self):
+        """
+        Check if the goal is reached (within threshold) or if the robot naturally
+        passed the goal. In both cases, update the goal index,
+        but only mark `is_goal_reached=True` when within the threshold.
+        """
+
+        # Distance to current goal
         self.current_goal_distance = self._goal_distance()
 
-        if self.current_goal_distance < self.goal_threshold:
-            self.current_goal_index += self.goal_step
-            self.goal_reached_counter += 1
-            if self.current_goal_index < len(self.path):
-                self.current_goal_position = self.path[self.current_goal_index]
-            else:
-                self.current_goal_position = self.path[-1]
+        # 1. Check normal "goal reached" condition
+        goal_reached_by_threshold = self.current_goal_distance < self.goal_threshold
+
+        # 2. Check "passed goal" condition
+        passed_goal = False
+        if self.current_goal_index < len(self.path) - 1:
+            next_goal = self.path[self.current_goal_index + 1]
+            dist_to_next = self._get_distance(self.current_position, next_goal)
+
+            # If robot is closer to the next goal than the current one, it passed it
+            if dist_to_next < self.current_goal_distance:
+                passed_goal = True
+
+        # 3. If goal was "reached" (threshold OR passed), update goal
+        if goal_reached_by_threshold or passed_goal:
+
+            # Advance goal index
+            self.current_goal_index = min(
+                self.current_goal_index + self.goal_step,
+                len(self.path) - 1
+            )
+
+            self.current_goal_position = self.path[self.current_goal_index]
             self._generate_goals_window()
-            self.is_goal_reached = True
+
+            # Only count as "is_goal_reached = True" when threshold reached
+            if goal_reached_by_threshold:
+                self.goal_reached_counter += 1
+                self.is_goal_reached = True       # <-- HERE
+            else:
+                self.is_goal_reached = False      # passed the goal, not reached
+
             return
+
+        # 4. Otherwise keep following subgoal
         self._update_subgoal()
         self.is_goal_reached = False
     
@@ -554,7 +608,7 @@ class PathObstacleLidarEnv(gym.Env):
             return
 
         # Random number of obstacles (0 to 5)
-        num_obstacles = np.random.randint(0, 30)  # 0 to 5 inclusive
+        num_obstacles = np.random.randint(0, 6)  # 0 to 5 inclusive
         
         self.obstacles = []
         
@@ -653,7 +707,7 @@ class PathObstacleLidarEnv(gym.Env):
 
     def _check_footprint_obstacle_overlap(self) -> None:
         '''
-        Check if the agent's footprint overlaps with any obstacle.
+        @brief Check if the agent's footprint overlaps with any obstacle.
         '''
         self.footprint_obstacle_overlap = False
         
@@ -674,8 +728,43 @@ class PathObstacleLidarEnv(gym.Env):
             if distance < (agent_footprint_radius + obstacle_radius):
                 self.footprint_obstacle_overlap = True
                 print("Footprint overlaps with obstacle!")
-                break  # No need to check other obstacles once overlap is found
-        
+                break 
+
+    def _get_closest_point_direction(self):
+        if len(self.path) == 0:
+            self.path_direction = 0.0
+            self.yaw_error_to_path = 0.0
+            return
+
+        closest_point = None
+        min_distance = float('inf')
+        closest_index = -1
+
+        # Find the closest point on the path
+        for i, point in enumerate(self.path):
+            distance = self._get_distance(self.current_position, point)
+            if distance < min_distance:
+                min_distance = distance
+                closest_point = point
+                closest_index = i
+
+        # Compute local direction if valid
+        if closest_index != -1:
+            next_index = min(closest_index + 1, len(self.path) - 1)
+            next_point = self.path[next_index]
+
+            # Local path direction (yaw desired)
+            self.path_direction = np.arctan2(
+                next_point[1] - closest_point[1],
+                next_point[0] - closest_point[0]
+            )
+
+            # Yaw error relative to the path
+            self.yaw_error_to_path = np.arctan2(
+                np.sin(self.path_direction - self.agent_yaw),
+                np.cos(self.path_direction - self.agent_yaw)
+            )
+
     def _check_footprint_costmap_overlap(self) -> None:
         '''
         Check if the agent's footprint overlaps with any obstacle's costmap.
@@ -685,7 +774,7 @@ class PathObstacleLidarEnv(gym.Env):
         if not hasattr(self, 'obstacles') or len(self.obstacles) == 0:
             return
         
-        # Check overlap with all obstacles' costmaps
+        # Check overlap with all obstacles costmaps
         agent_pos = self.current_position
         agent_footprint_radius = self.agent_footprint_radius
         
