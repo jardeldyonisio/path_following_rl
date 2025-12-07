@@ -9,7 +9,11 @@ from datetime import datetime
 from agent.ddpg import DDPGAgent
 from utils.utils import DrQv2Noise
 from torch.utils.tensorboard import SummaryWriter
-from environment.convoy import ConvoyPathFollowingEnv
+from environment.obstacle import ObstaclePathFollowingEnv
+from environment.path_obstacle import PathObstacleEnv
+from environment.free_obstacle import FreeObstacleEnv
+from environment.path_obstacle_lidar import PathObstacleLidarEnv
+from environment.path_multiple_obstacles_lidar import PathMultiObstaclesLidarEnv
 
 '''
 This code it's the main file to run the environment.
@@ -38,7 +42,7 @@ writer = SummaryWriter(log_dir=log_dir)
 if not os.path.exists(f"models/{timestamp}"):
     os.makedirs(f"models/{timestamp}")
 
-env = ConvoyPathFollowingEnv()
+env = PathMultiObstaclesLidarEnv()
 agent = DDPGAgent(observation_dim=env.observation_space.shape[0], 
                   action_dim=2, 
                   max_action=1.0, 
