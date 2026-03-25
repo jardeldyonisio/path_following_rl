@@ -35,7 +35,7 @@ To install the required dependencies, run the following command:
 To train the agent, use the following command:
 
 ```bash
-python train.py
+python3 train.py
 ```
 
 The runs files will be saved in the `runs` directory with the timestamp of the training session. You can monitor the training progress using TensorBoard:
@@ -48,7 +48,7 @@ You can then open your web browser and navigate to `http://localhost:6006` to vi
 To evaluate the trained agent, use the following command:
 
 ```bash
-python scripts/test.py
+python3 scripts/test.py
 ```
 
 ## Environment
@@ -73,11 +73,8 @@ There are defined a few paths shapes and with randomized parameters. Every time 
 
 - [ ] Environment with more paths;
 - [ ] Start the agent in a random position;
-- [ ] Add obstacles to the environment;
-- [ ] ROS2 implementation;
-- [ ] Environment on Isaac Sim;
+- [x] Add obstacles to the environment;
 - [x] Script to install dependencies;
-- [ ] Release a pre trained model.
 
 ## Cite
 
