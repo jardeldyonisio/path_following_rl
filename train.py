@@ -9,12 +9,15 @@ from datetime import datetime
 from agent.ddpg import DDPGAgent
 from utils.utils import DrQv2Noise
 from torch.utils.tensorboard import SummaryWriter
-from environment.simple import SimplePathFollowingEnv
+from environment.obstacle import ObstaclePathFollowingEnv
+from environment.path_obstacle import PathObstacleEnv
+from environment.free_obstacle import FreeObstacleEnv
+from environment.path_obstacle_lidar import PathObstacleLidarEnv
+from environment.path_multiple_obstacles_lidar import PathMultiObstaclesLidarEnv
 
 '''
 This code it's the main file to run the environment.
 '''
-
 
 # Set fixed seed
 SEED = 42
@@ -39,9 +42,11 @@ writer = SummaryWriter(log_dir=log_dir)
 if not os.path.exists(f"models/{timestamp}"):
     os.makedirs(f"models/{timestamp}")
 
-env = SimplePathFollowingEnv()
-obs_dim = 4 + env.num_goals_window
-agent = DDPGAgent(observation_dim=obs_dim, action_dim=2, max_action=1.0, seed=SEED)
+env = PathMultiObstaclesLidarEnv()
+agent = DDPGAgent(observation_dim=env.observation_space.shape[0], 
+                  action_dim=2, 
+                  max_action=1.0, 
+                  seed=SEED)
 noise = DrQv2Noise(action_dim=env.action_space.shape[0])
 
 last_best_avg_reward = -float('inf')
