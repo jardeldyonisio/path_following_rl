@@ -12,11 +12,11 @@ from agent.ddpg import DDPGAgent
 def main():
     # Configurar argumentos de linha de comando
     parser = argparse.ArgumentParser(description='Teste do agente DDPG no ambiente de path following')
-    parser.add_argument('--episodes', '-e', type=int, default=10, 
+    parser.add_argument('--episodes', '-e', type=int, default=3, 
                        help='Número de episódios para executar (padrão: 10)')
-    parser.add_argument('--path', '-p', type=str, default='path_circular',
+    parser.add_argument('--path', '-p', type=str, default='path_corredor',
                        help='Nome do path a ser usado (padrão: path_circular)')
-    parser.add_argument('--save-trajectory', '-s', action='store_true',
+    parser.add_argument('--save-trajectory', '-s', type=bool, default=True,
                        help='Salvar trajetória do agente em arquivo')
     args = parser.parse_args()
 
@@ -38,7 +38,7 @@ def main():
     agent = DDPGAgent(observation_dim=obs_dim, action_dim=2, max_action=1.0, seed=SEED)
 
     # Carregar os pesos do modelo treinado
-    checkpoint_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'models/2025-09-29_03-27-42/best_avg_model.pth'))
+    checkpoint_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'models/2026-06-22_18-47-50/best_avg_model.pth'))
     checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'))
     agent.actor.load_state_dict(checkpoint['actor'])
     agent.critic.load_state_dict(checkpoint['critic'])
